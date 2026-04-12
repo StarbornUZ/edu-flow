@@ -12,24 +12,31 @@ class ClassCreate(BaseModel):
     name: str
     subject: str
     academic_year: str  # "2025-2026"
+    org_id: uuid.UUID | None = None
+    subject_id: uuid.UUID | None = None
+    grade_level: int | None = None
 
 
 class ClassUpdate(BaseModel):
     name: str | None = None
     subject: str | None = None
     academic_year: str | None = None
+    grade_level: int | None = None
 
 
 class ClassResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
-    teacher_id: uuid.UUID
+    teacher_id: uuid.UUID | None
     name: str
     subject: str
     academic_year: str
     class_code: str
     class_code_expires_at: datetime
+    org_id: uuid.UUID | None = None
+    subject_id: uuid.UUID | None = None
+    grade_level: int | None = None
     created_at: datetime
     updated_at: datetime
 

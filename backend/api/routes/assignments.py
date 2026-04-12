@@ -92,6 +92,7 @@ async def create_assignment(data: AssignmentCreate, teacher: CurrentTeacher, db:
         questions_data=questions_data,
         course_id=data.course_id,
         module_id=data.module_id,
+        topic_id=data.topic_id,
         title=data.title,
         instructions=data.instructions,
         question_type=data.question_type,

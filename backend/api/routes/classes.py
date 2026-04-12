@@ -93,6 +93,9 @@ async def create_class(data: ClassCreate, teacher: CurrentTeacher, db: DBSession
         name=data.name,
         subject=data.subject,
         academic_year=data.academic_year,
+        org_id=data.org_id if hasattr(data, "org_id") else None,
+        subject_id=data.subject_id if hasattr(data, "subject_id") else None,
+        grade_level=data.grade_level if hasattr(data, "grade_level") else None,
     )
     return ClassResponse.model_validate(cls)
 

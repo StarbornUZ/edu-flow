@@ -2,6 +2,18 @@
 # Alembic autogenerate uchun bu fayl import qilinishi shart.
 
 from backend.db.models.user import User, UserRole
+from backend.db.models.organization import (
+    Organization,
+    OrganizationMember,
+    OrganizationRequest,
+    OrgType,
+    OrgPlan,
+    OrgStatus,
+    OrgMemberRole,
+    OrganizationRequestStatus,
+)
+from backend.db.models.subject import Subject
+from backend.db.models.topic import Topic
 from backend.db.models.course import (
     Course,
     CourseModule,
@@ -20,11 +32,33 @@ from backend.db.models.submission import (
     Achievement,
     AILog,
 )
+from backend.db.models.live_session import (
+    LiveSession,
+    LiveSessionTeam,
+    LiveSessionParticipant,
+    GameType,
+    SessionStatus,
+)
+from backend.db.models.badge import Badge, StudentBadge
+from backend.db.models.parent_student import ParentStudent
 
 __all__ = [
     # User
     "User",
     "UserRole",
+    # Organization
+    "Organization",
+    "OrganizationMember",
+    "OrganizationRequest",
+    "OrgType",
+    "OrgPlan",
+    "OrgStatus",
+    "OrgMemberRole",
+    "OrganizationRequestStatus",
+    # Subject
+    "Subject",
+    # Topic
+    "Topic",
     # Course
     "Course",
     "CourseModule",
@@ -47,5 +81,16 @@ __all__ = [
     "Achievement",
     "AILog",
     # RefreshSession
-    "RefreshSession"
+    "RefreshSession",
+    # LiveSession
+    "LiveSession",
+    "LiveSessionTeam",
+    "LiveSessionParticipant",
+    "GameType",
+    "SessionStatus",
+    # Badge
+    "Badge",
+    "StudentBadge",
+    # ParentStudent
+    "ParentStudent",
 ]

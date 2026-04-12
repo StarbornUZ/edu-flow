@@ -1,41 +1,254 @@
-"""AI generatsiya endpointlari — SSE streaming orqali.
-
-Asosiy model: GPT-4o | Zaxira: Claude Sonnet
+"""AI endpoints — Phase 4.
 
 Endpointlar:
-  POST /api/v1/ai/courses/generate      → kurs strukturasini generatsiya qilish (Teacher)
-  POST /api/v1/ai/assignments/generate  → vazifa savollarini generatsiya qilish (Teacher)
+  POST /api/v1/ai/generate-course      → SSE kurs generatsiyasi (Teacher)
+  POST /api/v1/ai/generate-topic       → Mavzu kontenti (Teacher)
+  POST /api/v1/ai/generate-assignment  → Vazifa generatsiyasi (Teacher)
+  POST /api/v1/ai/grade                → Ochiq javob baholash (Teacher)
+  POST /api/v1/ai/analyze-stats        → Dashboard AI tahlil (Teacher/OrgAdmin)
+  POST /api/v1/ai/split-groups         → Musobaqa uchun guruh ajratish (Teacher)
 
-Qo'llab-quvvatlanadigan tillar:
-  "uz" — O'zbek (standart)
-  "ru" — Rus tili
-  "en" — Ingliz tili
+  (Legacy endpoints preserved for backwards compatibility)
+  POST /api/v1/ai/courses/generate     → SSE kurs generatsiyasi (Teacher)
+  POST /api/v1/ai/assignments/generate → Vazifa generatsiyasi (Teacher)
 """
+from __future__ import annotations
+
+import json
 import uuid
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.api.deps import CurrentTeacher, DBSession
-from backend.repositories.ai_log_repo import AILogRepository
-from backend.services.ai_service import (
-    stream_assignment_generation,
-    stream_course_generation,
+from backend.api.deps import (
+    CurrentTeacher,
+    CurrentUser,
+    DBSession,
+    get_current_user,
+    get_db,
 )
-from backend.schemas.ai import CourseGenerateRequest, AssignmentGenerateRequest
+from backend.db.models.user import User
+from backend.services import ai_service
 
 router = APIRouter()
 
-# ---------------------------------------------------------------------------
-# SSE helpers
-# ---------------------------------------------------------------------------
+
+# ─── Schemas ──────────────────────────────────────────────────────────────────
+
+class CourseGenerateRequest(BaseModel):
+    subject: str
+    grade_level: int
+    goal: str
+    module_count: int = 3
+
+
+class TopicGenerateRequest(BaseModel):
+    topic_title: str
+    subject: str
+    grade_level: int
+
+
+class AssignmentGenerateRequest(BaseModel):
+    topic: str
+    subject: str
+    grade_level: int
+    question_type: str = "mcq"
+    count: int = 5
+
+
+class GradeRequest(BaseModel):
+    question: str
+    model_answer: str
+    student_answer: str
+    max_points: int = 10
+    rubric: str | None = None
+
+
+class StatsAnalysisRequest(BaseModel):
+    stats_data: dict
+
+
+class GroupSplitRequest(BaseModel):
+    class_ids: list[uuid.UUID]
+    n_groups: int = 3
+
+
+# ─── POST /ai/generate-course ─────────────────────────────────────────────────
+
+@router.post(
+    "/generate-course",
+    summary="AI bilan kurs generatsiyasi (SSE streaming, Teacher)",
+)
+async def generate_course(
+    body: CourseGenerateRequest,
+    current_user: CurrentTeacher,
+    db: DBSession,
+):
+    """Claude Sonnet 4.6 yordamida to'liq kurs strukturasini SSE orqali qaytaradi."""
+    from backend.services.prompts.course_prompts import COURSE_GENERATION_SYSTEM, course_generation_user
+
+    async def event_generator():
+        try:
+            async for chunk in ai_service.stream_claude(
+                system=COURSE_GENERATION_SYSTEM,
+                user_message=course_generation_user(
+                    body.subject, body.grade_level, body.goal, body.module_count
+                ),
+                max_tokens=8000,
+                db=db,
+                org_id=str(current_user.org_id) if current_user.org_id else None,
+                user_id=str(current_user.id),
+                endpoint="generate_course",
+            ):
+                yield f"data: {json.dumps({'text': chunk})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+# ─── POST /ai/generate-topic ──────────────────────────────────────────────────
+
+@router.post("/generate-topic", summary="AI bilan mavzu kontenti yaratish (Teacher)")
+async def generate_topic(
+    body: TopicGenerateRequest,
+    current_user: CurrentTeacher,
+    db: DBSession,
+):
+    """Markdown formatida mavzu kontentini qaytaradi (kamida 500 so'z)."""
+    content = await ai_service.generate_topic_content(
+        topic_title=body.topic_title,
+        subject=body.subject,
+        grade_level=body.grade_level,
+    )
+    return {"content_md": content}
+
+
+# ─── POST /ai/generate-assignment ────────────────────────────────────────────
+
+@router.post("/generate-assignment", summary="AI bilan vazifa generatsiyasi (Teacher)")
+async def generate_assignment(
+    body: AssignmentGenerateRequest,
+    current_user: CurrentTeacher,
+    db: DBSession,
+):
+    """JSON formatida vazifa savollarini qaytaradi."""
+    from backend.services.prompts.course_prompts import ASSIGNMENT_GENERATION_SYSTEM, assignment_generation_user
+    result = await ai_service.get_json_from_claude(
+        system=ASSIGNMENT_GENERATION_SYSTEM,
+        user_message=assignment_generation_user(
+            body.topic, body.subject, body.grade_level,
+            body.question_type, body.count
+        ),
+        max_tokens=3000,
+    )
+    return result
+
+
+# ─── POST /ai/grade ──────────────────────────────────────────────────────────
+
+@router.post("/grade", summary="Ochiq javobni AI bilan baholash (Teacher)")
+async def grade_answer(
+    body: GradeRequest,
+    current_user: CurrentTeacher,
+    db: DBSession,
+):
+    """score, feedback, is_correct va batafsil izoh qaytaradi."""
+    result = await ai_service.grade_submission(
+        question=body.question,
+        model_answer=body.model_answer,
+        student_answer=body.student_answer,
+        max_points=body.max_points,
+        rubric=body.rubric,
+    )
+    return result
+
+
+# ─── POST /ai/analyze-stats ──────────────────────────────────────────────────
+
+@router.post("/analyze-stats", summary="Dashboard AI tahlili (Teacher/OrgAdmin)")
+async def analyze_stats(
+    body: StatsAnalysisRequest,
+    current_user: CurrentUser,
+    db: DBSession,
+):
+    """Statistika asosida AI insights qaytaradi."""
+    analysis = await ai_service.analyze_stats(body.stats_data)
+    return {"analysis": analysis}
+
+
+# ─── POST /ai/split-groups ───────────────────────────────────────────────────
+
+@router.post("/split-groups", summary="Musobaqa uchun adolatli guruh ajratish (Teacher)")
+async def split_groups(
+    body: GroupSplitRequest,
+    current_user: CurrentTeacher,
+    db: DBSession,
+):
+    """O'quvchilarni XP va natijalariga qarab raqobatbardosh guruhlarga bo'ladi."""
+    from backend.db.models.class_ import ClassEnrollment
+    from backend.db.models.user import User as UserModel
+
+    students = []
+    for class_id in body.class_ids:
+        result = await db.execute(
+            select(UserModel).join(
+                ClassEnrollment, ClassEnrollment.student_id == UserModel.id
+            ).where(
+                ClassEnrollment.class_id == class_id,
+                ClassEnrollment.status == "active",
+            )
+        )
+        for student in result.scalars().all():
+            students.append({
+                "id": str(student.id),
+                "name": student.full_name,
+                "xp": getattr(student, "xp", 0),
+                "level": getattr(student, "level", 1),
+            })
+
+    if len(students) < body.n_groups:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"O'quvchilar soni ({len(students)}) guruhlar sonidan ({body.n_groups}) kam",
+        )
+
+    groups = await ai_service.split_into_groups(students, body.n_groups)
+    return groups
+
+
+# ─── Legacy endpoints (backwards compatibility) ───────────────────────────────
+
+# Legacy schemas for old endpoints
+class _LegacyCourseRequest(BaseModel):
+    subject: str
+    level: int = 5
+    goal: str = ""
+    module_count: int = 3
+    language: str = "uz"
+
+
+class _LegacyAssignmentRequest(BaseModel):
+    topic: str
+    difficulty: str = "medium"
+    question_type: str = "mcq"
+    count: int = 5
+    language: str = "uz"
+
 
 META_PREFIX = "[META]"
 DONE_SIGNAL = "[DONE]"
 
 
 def _parse_meta(chunk: str) -> tuple[str, int, int] | None:
-    """[META]hash:tokens:ms — ni parse qiladi."""
     if not chunk.startswith(META_PREFIX):
         return None
     parts = chunk[len(META_PREFIX):].split(":")
@@ -47,13 +260,8 @@ def _parse_meta(chunk: str) -> tuple[str, int, int] | None:
         return None
 
 
-async def _sse_wrapper(
-        generator,
-        teacher_id: uuid.UUID,
-        endpoint: str,
-        db: DBSession,
-):
-    """Stream generatorni SSE formatga o'giradi va AILog yozadi."""
+async def _sse_wrapper(generator, teacher_id: uuid.UUID, endpoint: str, db):
+    from backend.repositories.ai_log_repo import AILogRepository
     prompt_hash = ""
     tokens_used = 0
     response_ms = 0
@@ -68,7 +276,6 @@ async def _sse_wrapper(
             continue
         yield f"data: {chunk}\n\n"
 
-    # Stream tugagach — AILog yoziladi
     if prompt_hash:
         log_repo = AILogRepository(db)
         await log_repo.log(
@@ -80,34 +287,16 @@ async def _sse_wrapper(
         )
 
 
-# ---------------------------------------------------------------------------
-# POST /ai/courses/generate
-# ---------------------------------------------------------------------------
-
 @router.post(
     "/courses/generate",
-    summary="Kurs strukturasini AI yordamida generatsiya qilish (Teacher, SSE)",
-    description="""
-**GPT-4o** (asosiy) yoki **Claude Sonnet** (zaxira) yordamida kurs strukturasini
-Server-Sent Events (SSE) formatida qaytaradi.
-
-**Frontend ulashish:**
-```js
-const resp = await fetch('/api/v1/ai/courses/generate', {
-  method: 'POST',
-  headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer ...'},
-  body: JSON.stringify({subject, level, goal, module_count, language}),
-});
-const reader = resp.body.getReader();
-// chunklarni o'qing, "[DONE]" — stream tugadi
-```
-""",
+    summary="[Legacy] Kurs strukturasini AI yordamida generatsiya qilish (Teacher, SSE)",
 )
-async def generate_course(
-        data: CourseGenerateRequest,
-        teacher: CurrentTeacher,
-        db: DBSession,
+async def legacy_generate_course(
+    data: _LegacyCourseRequest,
+    teacher: CurrentTeacher,
+    db: DBSession,
 ):
+    from backend.services.ai_service import stream_course_generation
     gen = stream_course_generation(
         subject=data.subject,
         level=data.level,
@@ -118,32 +307,20 @@ async def generate_course(
     return StreamingResponse(
         _sse_wrapper(gen, teacher.id, "course_generation", db),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-        },
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 
-# ---------------------------------------------------------------------------
-# POST /ai/assignments/generate
-# ---------------------------------------------------------------------------
-
 @router.post(
     "/assignments/generate",
-    summary="Vazifa savollarini AI yordamida generatsiya qilish (Teacher, SSE)",
-    description="""
-**GPT-4o** (asosiy) yoki **Claude Sonnet** (zaxira) yordamida vazifa savollarini
-SSE formatida qaytaradi.
-
-`language` parametri yordamida savollar tanlangan tilda (uz/ru/en) generatsiya qilinadi.
-""",
+    summary="[Legacy] Vazifa savollarini AI yordamida generatsiya qilish (Teacher, SSE)",
 )
-async def generate_assignment(
-        data: AssignmentGenerateRequest,
-        teacher: CurrentTeacher,
-        db: DBSession,
+async def legacy_generate_assignment(
+    data: _LegacyAssignmentRequest,
+    teacher: CurrentTeacher,
+    db: DBSession,
 ):
+    from backend.services.ai_service import stream_assignment_generation
     gen = stream_assignment_generation(
         topic=data.topic,
         difficulty=data.difficulty,
@@ -154,8 +331,5 @@ async def generate_assignment(
     return StreamingResponse(
         _sse_wrapper(gen, teacher.id, "assignment_generation", db),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-        },
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
