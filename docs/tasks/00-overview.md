@@ -1,202 +1,141 @@
-# EduFlow — Project Overview & Task Chain
-
-> **National AI Hackathon | Buxoro bosqichi | 10–15 aprel 2026**
-> Stack: FastAPI + Next.js 14 + PostgreSQL + Redis + Claude API
-
----
-
-## Loyiha haqida qisqacha
-
-**EduFlow** — o'qituvchi + o'quvchi uchun AI-asosidagi interaktiv ta'lim platformasi.
-
-```
-O'qituvchi kurs yaratadi (AI bilan)
-    → Sinf + o'quvchi qo'shadi
-        → Vazifa chiqaradi (6 format)
-            → O'quvchi yechadi
-                → AI tekshiradi + XP beradi
-                    → O'qituvchi dashboardda natijani ko'radi
-```
-
-**Demo zanjiri (5 daqiqa):** Login → AI kurs → Sinf → Vazifa → O'quvchi yechadi → AI baho → Dashboard
+# EduFlow — Loyiha Arxitekturasi va Fazalar Xaritasi
+> **TZ v3.0 · National AI Hackathon · Buxoro 2026**
+> Stack: FastAPI + Next.js 14 + PostgreSQL + Claude API + WebSocket
 
 ---
 
-## Jamoa rollari
+## Loyiha haqida
 
-| Rol | Fayl | Texnologiyalar |
-|---|---|---|
-| Backend Developer | [01-backend.md](./01-backend.md) | Python 3.12, FastAPI, SQLAlchemy, PostgreSQL, Redis, Celery |
-| Frontend Developer | [02-frontend.md](./02-frontend.md) | Next.js 14, TypeScript, Tailwind, shadcn/ui, Zustand |
-| AI / Prompt Engineer | [03-ai-engineer.md](./03-ai-engineer.md) | Anthropic SDK, Pydantic, SSE, Redis cache |
-| UI/UX + PM | [04-ui-pm.md](./04-ui-pm.md) | Figma, Framer Motion, demo tayyorlash |
+**EduFlow** — xususiy maktablar va o'quv markazlari uchun B2B SaaS ta'lim platformasi.
 
----
-
-## MVP / Post-MVP chegarasi
-
-### MVP ga kiradi (2 kunda quriladi):
-- [x] Login / Register (teacher + student)
-- [x] AI bilan kurs generatsiyasi (SSE streaming)
-- [x] Kurs + modul CRUD
-- [x] Sinf yaratish + sinf kodi
-- [x] AI yordamida vazifa generatsiyasi
-- [x] MCQ + darhol AI izoh
-- [x] Bo'shliq to'ldirish formati
-- [x] Ochiq savol + AI baholash
-- [x] Vaqtli musobaqa (taymer)
-- [x] Streak tizimi + XP
-- [x] O'qituvchi dashboard
-- [x] Jonli URL (deploy: Vercel + Railway)
-
-### Post-MVP (keyingi versiya):
-- [ ] Drag-and-drop juftlashtirish (Matching)
-- [ ] Tartibga solishtirish (Ordering)
-- [ ] Real-time sinf reytingi (WebSocket)
-- [ ] O'quvchi mustaqil kursi
-- [ ] Video + savol formati
-- [ ] Mobil ilova
-
----
-
-## Vazifalar zanjiri (dependency map)
-
-### DARHOL (Kun 1, 08:00) — BARCHA rollar parallel:
 ```
-BE: Setup (repo, .env, DB, Redis)       ─┐
-FE: Setup (Next.js, shadcn, Zustand)    ─┤  → barchasi bir vaqtda
-AI: Setup (anthropic SDK, env check)    ─┤
-PM: Figma file + dizayn tizimi          ─┘
+Tashkilot yaratish so'rovi
+  → Admin tasdiqlaydi
+    → Organization-admin: o'qituvchi + sinf + o'quvchi qo'shadi
+      → Teacher: AI bilan kurs yaratadi, musobaqa o'tkazadi
+        → Student: mavzu o'rganadi, vazifa bajaradi → XP oladi
+          → Parent: farzandning progressini kuzatadi
 ```
 
-### KETMA-KET (Backend → Frontend ni blok qiladi):
+**Demo zanjiri (5 daqiqa):**
 ```
-BE-P1: DB models + migration
-    ↓
-BE-P2: Auth endpoints (register/login/JWT/refresh)
-    ↓
-FE-P1: Login/Register sahifasi + auth context + route guard
-    ↓
-[parallel unlock: FE-P2 va BE-P3 bir vaqtda boshlanadi]
-```
-
-### PARALLEL (Kun 1, 11:00–17:00):
-```
-BE-P3: Course CRUD + Class CRUD          ─┐
-FE-P2: Teacher dashboard + kurs forma   ─┤  parallel
-AI-P1: Course generation prompt + SSE   ─┘
-
-    ↓ (BE-P3 tayyor bo'lgandan keyin)
-
-BE-P4: Assignment CRUD ──┐
-AI-P1 tugagach:          ├── parallel
-FE-P2 (AI streaming UI) ─┘
-```
-
-### KETMA-KET (AI backend → AI frontend):
-```
-AI-P1: /courses/ai-generate SSE endpoint tayyor
-    ↓
-FE: "AI bilan yarat" UI — SSE streaming ko'rsatish
-```
-
-### Kun 2 boshlanishi (KETMA-KET):
-```
-BE-P5: Submission endpoint + AI grading (MCQ + Ochiq)
-    ↓
-FE-P3: Vazifa yechish ekrani + XP animatsiyasi
-    ↓ (parallel:)
-BE-P6: Teacher dashboard API (sinf statistika)
-FE-P3: MCQ + Vaqtli musobaqa komponentlari
-
-    ↓
-FE: Teacher dashboard grafiklari (Recharts)
-```
-
-### DOIM PARALLEL (ikki kun davomida):
-```
-PM: Dizayn tizimi + Figma komponentlar   (istalgan vaqtda)
-AI: Prompt testing + tuning               (backenddan mustaqil)
-PM: Demo stsenariysi tayyorlash           (Kun 2, 13:00+)
-BE-P7: Security hardening (rate limit)   (Kun 2, 13:00+)
-BE-P8: Docker + deploy                   (Kun 2, parallel)
+Admin: Org so'rovni tasdiqlash (10 sek)
+→ Org-admin: sinf + teacher + student yaratish (30 sek)
+→ Teacher: AI bilan kurs generatsiyasi (30 sek)
+→ Student: mavzu o'qiydi + vazifa bajaradi (40 sek)
+→ AI: javobni baholaydi + XP beradi (5 sek)
+→ Teacher: Blitz Jang boshlaydi → real-time leaderboard
+→ Dashboard: to'liq statistika
 ```
 
 ---
 
-## Kritik yo'l (Critical Path)
+## Foydalanuvchi rollari
 
-Quyidagi vazifalardan biri kechiksa — butun demo zanjiri to'xtaydi:
+| Rol | Daraja | Asosiy qobiliyatlar |
+|-----|--------|---------------------|
+| `admin` | Platform | So'rovlar, fanlar, platform sozlamalari |
+| `org_admin` | Tashkilot | O'qituvchi/sinf/o'quvchi/ota-ona boshqaruvi |
+| `teacher` | Sinf/Kurs | Kurs (AI), musobaqa, baholash, dashboard |
+| `student` | Shaxsiy | Mavzular, vazifalar, XP, musobaqa |
+| `parent` | Kuzatuv | Farzand statistikasi, PDF hisobot |
+
+---
+
+## Jamoa va Fazalar Taqsimoti
+
+| Kishi | Rol | Asosiy fazalar |
+|-------|-----|----------------|
+| **Akramov Oybek** | TeamLead | Koordinatsiya, Faza 4 (AI), Faza 5 (Live), Faza 7 (Deploy) |
+| **Muxtorov Javohirbek** | Backend | Faza 1 (Foundation), Faza 2 (Org), Faza 3 (Academic) |
+| **Amonov Ahmadjon** | Frontend/AI | Faza 6A: Admin + Teacher UI, AI generatsiya UI |
+| **Amonov Aminjon** | Frontend/UX | Faza 6B: Student + Parent UI, Live musobaqa UI |
+
+---
+
+## Fazalar Xaritasi
+
+| # | Faza | Mas'ul | Kun/Vaqt | Fayl |
+|---|------|--------|----------|------|
+| **0** | Setup — barcha toollar | Barchasi | Kun 1 · 08-09 | — |
+| **1** | Foundation: DB Schema + Auth | Javohir | Kun 1 · 09-11 | [01-phase1](./01-phase1-foundation.md) |
+| **2** | Organization flow | Javohir | Kun 1 · 11-13 | [02-phase2](./02-phase2-organization.md) |
+| **3** | Academic core | Javohir | Kun 1 · 13-17 | [03-phase3](./03-phase3-academic.md) |
+| **4** | AI integration | Oybek + Javohir | Kun 1 · 14-19 | [04-phase4](./04-phase4-ai.md) |
+| **5** | Live sessions (WebSocket) | Oybek + Aminjon | Kun 2 · 08-12 | [05-phase5](./05-phase5-live.md) |
+| **6** | Frontend | Ahmadjon + Aminjon | Kun 1-2 parallel | [06-phase6](./06-phase6-frontend.md) |
+| **7** | Deploy + Xavfsizlik | Oybek | Kun 2 · 15-18 | [07-phase7](./07-phase7-deploy.md) |
+
+---
+
+## Parallel ishlash grafigi
 
 ```
-1. DB models (BE-P1)
-2. Auth endpoints (BE-P2)
-3. Login sahifasi (FE-P1)
-4. AI kurs generatsiyasi endpoint (AI-P1 + BE-P3)
-5. Submission + AI grading (BE-P5)
-6. MCQ yechish ekrani (FE-P3)
-7. Deploy (Vercel + Railway)
+Kun 1:
+08:00 ┌── Barchasi: Faza 0 (Setup) ───────────────────────────────────┐
+09:00 ├── Javohir: Faza 1 (DB+Auth) ─────────┐                        │
+      │   Ahmadjon+Aminjon: FE Setup ─────────────────────────────────┤
+11:00 ├── Javohir: Faza 2 (Org) ─────────────┘                        │
+      │   Ahmadjon: FE Login + Admin UI ──────────────────────────────┤
+13:00 ├── Javohir: Faza 3 (Academic) ────────────────────────┐         │
+      │   Oybek: Faza 4 (AI) parallel boshlanadi ────────────┤         │
+      │   Aminjon: FE Student UI ──────────────────────────────────────┤
+17:00 ├── Javohir: Faza 3 tugaydi                            │         │
+19:00 └── Oybek: Faza 4 tugaydi ────────────────────────────┘         │
+
+Kun 2:
+08:00 ┌── Oybek+Aminjon: Faza 5 (Live WS) ─────────────────────┐      │
+      │   Ahmadjon: Dashboard + AI UI ─────────────────────────┤      │
+12:00 ├── Faza 5 tugaydi                                        │      │
+      │   FE polish + integration ──────────────────────────────┤      │
+15:00 ├── Oybek: Faza 7 (Deploy) ──────────────────────────────┘      │
+18:00 └── Deploy tayyor → Demo rehearsal ────────────────────────────────┘
 ```
 
 ---
 
-## Vazifalarni kuzatish uchun tavsiya
+## Kritik yo'l
 
-### GitHub Projects (tavsiya etiladi — bepul, repo ichida)
-
-Yangi GitHub Project yarating: **"EduFlow Hackathon Board"**
-
-**Columns (kanban):**
 ```
-📋 Backlog  →  🔄 In Progress  →  👀 Review  →  ✅ Done
-```
-
-**Issue labels:**
-```
-# Rol bo'yicha:
-backend        (ko'k)
-frontend       (yashil)
-ai-engineer    (binafsha)
-ui-pm          (sariq)
-
-# Muhimlik:
-critical       (qizil)   — demo zanjiri uchun kerakli
-nice-to-have   (kulrang)  — post-MVP
-
-# Kun:
-day-1          (to'q ko'k)
-day-2          (to'q yashil)
+Faza 1 → Faza 2 → Faza 3 → Faza 4
+                            ↓
+                     Faza 6 (Teacher UI + Student UI)
+                            ↓
+                      Faza 7 (Deploy)
 ```
 
-**Har bir issue template:**
-```markdown
-## Vazifa: [BE/FE/AI/PM]-XX — Qisqa nomi
-
-**Rol:** Backend / Frontend / AI / PM
-**Kun:** 1 / 2
-**Vaqt:** ~X soat
-**Bog'liq vazifa:** #XX tayyor bo'lgandan keyin
-
-### Bajariladigan ishlar:
-- [ ] ...
-
-### Muvaffaqiyat mezoni:
-- ...
-```
-
-**Qo'shimcha vositalar:**
-
-| Vosita | Afzalligi | Kamchiligi |
-|---|---|---|
-| **GitHub Projects** | Bepul, repo bilan integratsiya, issues bog'lash | UI unchalik qulay emas |
-| **Linear** | Tez, keyboard-first, chiroyli UI | To'liq bepul emas (5 member limit) |
-| **Notion** | Docs + tasks birlashgan | Sekin, offline ishlamaydi |
-| **Trello** | Oddiy kanban | Issues bilan integratsiya yo'q |
-
-> Hackathon uchun: **GitHub Projects** yoki **Linear** (kichik jamoa — bepul tier yetarli).
+> Faza 5 (Live) — MVP demo uchun **kerakli**, lekin vaqt yetmasa Blitz Jang (sodda tur) bilan cheklanish mumkin.
 
 ---
 
-## Jadvalni ko'rish uchun:
-- [Kun 1 jadvali →](./05-day1-schedule.md)
-- [Kun 2 jadvali →](./06-day2-schedule.md)
+## Mavjud kod holati
+
+```
+✅ Mavjud (o'zgartirish kerak):
+├── backend/db/models/user.py         role: teacher/student/admin → + org_admin, parent
+├── backend/db/models/course.py       Course+Module+Enrollment  → + org_id, topic_id
+├── backend/db/models/class_.py       Class+ClassEnrollment     → + org_id, subject_id
+├── backend/db/models/assignment.py   Assignment+Question       → + topic_id link
+├── backend/db/models/submission.py   Submission+Result+Achievement
+├── backend/api/routes/auth.py        register/login/me
+├── backend/api/routes/courses.py     CRUD
+├── backend/api/routes/classes.py     CRUD + join
+├── backend/api/routes/assignments.py
+├── backend/api/routes/ai.py          generate + grade
+├── backend/api/routes/dashboard.py   teacher + student
+├── backend/services/ai_service.py    Claude wrapper
+└── backend/services/gamification_service.py
+
+❌ Yo'q (yaratish kerak):
+├── backend/db/models/organization.py    Organization + Request + Member
+├── backend/db/models/subject.py         Subject (global/org)
+├── backend/db/models/topic.py           Topic (Module → Topic → Assignment)
+├── backend/db/models/live_session.py    LiveSession + Team + Participant + Question
+├── backend/db/models/badge.py           Badge + StudentBadge
+├── backend/db/models/parent_student.py  ParentStudent
+├── backend/api/routes/organizations.py  Org CRUD + request flow
+├── backend/api/routes/topics.py         Topic CRUD
+├── backend/api/routes/live_sessions.py  WS musobaqa
+├── backend/services/live_session_service.py
+└── frontend/  (butun papka)
+```
