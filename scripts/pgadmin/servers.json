@@ -1,0 +1,15 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "EduFlow Local",
+      "Group": "EduFlow",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "eduflow",
+      "Username": "eduflow",
+      "SSLMode": "prefer",
+      "PassFile": "/pgpass",
+      "Comment": "EduFlow Docker PostgreSQL (eduflow/eduflow_dev_pass)"
+    }
+  }
+}
