@@ -109,8 +109,29 @@ async def create_course(data: CourseCreate, teacher: CurrentTeacher, db: DBSessi
         difficulty=data.difficulty,
         cover_url=data.cover_url,
         is_ai_generated=data.is_ai_generated,
+        org_id=data.org_id if hasattr(data, "org_id") else None,
+        subject_id=data.subject_id if hasattr(data, "subject_id") else None,
     )
     return CourseResponse.model_validate(course)
+
+
+# ---------------------------------------------------------------------------
+# GET /courses/my — student uchun yozilgan kurslar
+# ---------------------------------------------------------------------------
+
+@router.get(
+    "/my",
+    response_model=list[CourseResponse],
+    summary="O'quvchi yozilgan kurslar ro'yxati (student)",
+)
+async def my_courses(user: CurrentUser, db: DBSession):
+    """Student uchun yozilgan kurslar. Teacher/admin uchun o'z kurslari."""
+    repo = _repo(db)
+    if user.role == UserRole.student:
+        courses = await repo.get_enrolled_by_student(user.id)
+    else:
+        courses = await repo.get_by_teacher(user.id)
+    return [CourseResponse.model_validate(c) for c in courses]
 
 
 # ---------------------------------------------------------------------------

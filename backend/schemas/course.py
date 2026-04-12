@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
@@ -22,6 +23,8 @@ class CourseCreate(BaseModel):
     difficulty: str = "beginner"
     cover_url: str | None = None
     is_ai_generated: bool = False
+    org_id: uuid.UUID | None = None
+    subject_id: uuid.UUID | None = None
 
     @field_validator("difficulty")
     @classmethod
@@ -59,6 +62,8 @@ class CourseResponse(BaseModel):
     is_ai_generated: bool
     is_verified: bool
     status: str
+    org_id: uuid.UUID | None = None
+    subject_id: uuid.UUID | None = None
     created_at: datetime
     updated_at: datetime
 

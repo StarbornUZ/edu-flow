@@ -31,6 +31,20 @@ class Course(Base, TimestampMixin):
         index=True,
     )
 
+    org_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    subject_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("subjects.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     title: Mapped[str] = mapped_column(
         String(512),
         nullable=False,

@@ -1,7 +1,8 @@
 import enum
+import uuid
 from datetime import date
 
-from sqlalchemy import Date, Enum, String
+from sqlalchemy import UUID, Date, Enum, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.db.base import Base
@@ -12,6 +13,8 @@ class UserRole(str, enum.Enum):
     teacher = "teacher"
     student = "student"
     admin = "admin"
+    org_admin = "org_admin"
+    parent = "parent"
 
 
 class User(Base, TimestampMixin):
@@ -43,6 +46,18 @@ class User(Base, TimestampMixin):
     avatar_url: Mapped[str | None] = mapped_column(
         String(1024),
         nullable=True,
+    )
+
+    phone: Mapped[str | None] = mapped_column(
+        String(20),
+        nullable=True,
+    )
+
+    org_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
     )
 
     # --- Gamifikatsiya ---

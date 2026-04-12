@@ -85,6 +85,7 @@ class QuestionResponseWithAnswer(QuestionResponse):
 class AssignmentCreate(BaseModel):
     course_id: uuid.UUID
     module_id: uuid.UUID | None = None
+    topic_id: uuid.UUID | None = None
     title: str
     instructions: str
     question_type: str       # assignment darajasida umumiy tur
@@ -115,9 +116,10 @@ class AssignmentResponse(BaseModel):
     id: uuid.UUID
     course_id: uuid.UUID
     module_id: uuid.UUID | None
+    topic_id: uuid.UUID | None = None
     teacher_id: uuid.UUID
     title: str
-    instructions: str
+    instructions: str | None
     question_type: str
     time_limit_sec: int | None
     max_attempts: int

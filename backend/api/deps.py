@@ -128,8 +128,8 @@ def _require_role(required_role: UserRole):
 
 
 async def _require_teacher_or_admin(user: CurrentUser) -> User:
-    """Teacher yoki admin bo'lishi kerak."""
-    if user.role not in (UserRole.teacher, UserRole.admin):
+    """Teacher, org_admin yoki admin bo'lishi kerak."""
+    if user.role not in (UserRole.teacher, UserRole.admin, UserRole.org_admin):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Bu amal faqat o'qituvchilar uchun ruxsat etilgan",
@@ -137,6 +137,28 @@ async def _require_teacher_or_admin(user: CurrentUser) -> User:
     return user
 
 
+async def _require_org_admin(user: CurrentUser) -> User:
+    """Org_admin yoki admin bo'lishi kerak."""
+    if user.role not in (UserRole.org_admin, UserRole.admin):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Bu amal faqat tashkilot administratorlari uchun ruxsat etilgan",
+        )
+    return user
+
+
+async def _require_parent(user: CurrentUser) -> User:
+    """Parent bo'lishi kerak."""
+    if user.role != UserRole.parent:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Bu amal faqat ota-onalar uchun ruxsat etilgan",
+        )
+    return user
+
+
 CurrentTeacher = Annotated[User, Depends(_require_teacher_or_admin)]
 CurrentStudent = Annotated[User, Depends(_require_role(UserRole.student))]
 CurrentAdmin = Annotated[User, Depends(_require_role(UserRole.admin))]
+CurrentOrgAdmin = Annotated[User, Depends(_require_org_admin)]
+CurrentParent = Annotated[User, Depends(_require_parent)]

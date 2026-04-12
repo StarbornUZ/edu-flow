@@ -503,3 +503,150 @@ async def grade_open_answer(
 
 def make_prompt_hash(text: str) -> str:
     return _prompt_hash(text)
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: New AI functions (Claude Sonnet 4.6 direct)
+# ---------------------------------------------------------------------------
+
+MODEL_CLAUDE = "claude-sonnet-4-6"
+
+
+async def stream_claude(
+    system: str,
+    user_message: str,
+    max_tokens: int = 4096,
+    db=None,
+    org_id=None,
+    user_id=None,
+    endpoint: str = "unknown",
+):
+    """
+    Claude Sonnet 4.6 bilan SSE streaming.
+    db + org_id berilsa — token limit tekshiriladi va log yoziladi.
+    """
+    import time
+    import hashlib
+    from sqlalchemy import update as sql_update
+
+    # Org budget tekshiruvi
+    if db and org_id:
+        from backend.db.models.organization import Organization
+        org = await db.get(Organization, org_id)
+        if org and org.ai_token_limit and org.ai_tokens_used >= org.ai_token_limit:
+            raise Exception("AI token limiti tugadi. Org-admin bilan bog'laning.")
+
+    start = time.time()
+    full_text = ""
+    input_tokens = 0
+    output_tokens = 0
+
+    client = _get_anthropic()
+    async with client.messages.stream(
+        model=MODEL_CLAUDE,
+        max_tokens=max_tokens,
+        system=system,
+        messages=[{"role": "user", "content": user_message}],
+    ) as stream:
+        async for text in stream.text_stream:
+            full_text += text
+            yield text
+
+        usage = stream.get_final_message().usage
+        input_tokens = usage.input_tokens
+        output_tokens = usage.output_tokens
+
+    # Log yozish
+    if db and user_id:
+        from backend.db.models.submission import AILog
+        log = AILog(
+            user_id=user_id,
+            endpoint=endpoint,
+            prompt_hash=hashlib.sha256(user_message.encode()).hexdigest(),
+            tokens_used=input_tokens + output_tokens,
+            response_ms=int((time.time() - start) * 1000),
+        )
+        db.add(log)
+
+        if org_id:
+            from sqlalchemy import update as _update
+            from backend.db.models.organization import Organization
+            await db.execute(
+                _update(Organization)
+                .where(Organization.id == org_id)
+                .values(ai_tokens_used=Organization.ai_tokens_used + input_tokens + output_tokens)
+            )
+        await db.commit()
+
+
+async def get_json_from_claude(
+    system: str, user_message: str, max_tokens: int = 4096
+) -> dict | list:
+    """Claude dan JSON javob olish (streaming emas)."""
+    import json
+    import re
+    client = _get_anthropic()
+    message = await client.messages.create(
+        model=MODEL_CLAUDE,
+        max_tokens=max_tokens,
+        system=system + "\n\nFaqat JSON format bilan javob ber. Hech qanday izoh yozma.",
+        messages=[{"role": "user", "content": user_message}],
+    )
+    text = message.content[0].text
+    match = re.search(r'(\{.*\}|\[.*\])', text, re.DOTALL)
+    if match:
+        return json.loads(match.group(1))
+    return json.loads(text)
+
+
+async def generate_topic_content(
+    topic_title: str, subject: str, grade_level: int
+) -> str:
+    """Mavzu uchun Markdown kontent yaratish."""
+    from backend.services.prompts.course_prompts import TOPIC_CONTENT_SYSTEM, topic_content_user
+    result = []
+    async for chunk in stream_claude(
+        system=TOPIC_CONTENT_SYSTEM,
+        user_message=topic_content_user(topic_title, subject, grade_level),
+        max_tokens=3000,
+        endpoint="generate_topic",
+    ):
+        result.append(chunk)
+    return "".join(result)
+
+
+async def grade_submission(
+    question: str, model_answer: str, student_answer: str,
+    max_points: int, rubric: str | None = None
+) -> dict:
+    """Ochiq javobni AI bilan baholash — JSON dict qaytaradi."""
+    from backend.services.prompts.grading_prompts import GRADING_SYSTEM, grading_user
+    return await get_json_from_claude(
+        system=GRADING_SYSTEM,
+        user_message=grading_user(question, model_answer, student_answer, max_points, rubric),
+        max_tokens=1000,
+    )
+
+
+async def analyze_stats(stats_data: dict) -> str:
+    """Statistika tahlili — matn qaytaradi."""
+    from backend.services.prompts.grading_prompts import STATS_ANALYSIS_SYSTEM, stats_analysis_user
+    result = []
+    async for chunk in stream_claude(
+        system=STATS_ANALYSIS_SYSTEM,
+        user_message=stats_analysis_user(stats_data),
+        max_tokens=1500,
+        endpoint="analyze_stats",
+    ):
+        result.append(chunk)
+    return "".join(result)
+
+
+async def split_into_groups(students: list[dict], n_groups: int) -> dict:
+    """O'quvchilarni adolatli guruhlarga bo'lish."""
+    from backend.services.prompts.grading_prompts import GROUP_SPLIT_SYSTEM, group_split_user
+    return await get_json_from_claude(
+        system=GROUP_SPLIT_SYSTEM,
+        user_message=group_split_user(students, n_groups),
+        max_tokens=2000,
+    )

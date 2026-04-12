@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import UUID, DateTime, Enum, ForeignKey, String
+from sqlalchemy import UUID, DateTime, Enum, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.db.base import Base
@@ -27,6 +27,25 @@ class Class(Base, TimestampMixin):
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
+    )
+
+    org_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    subject_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("subjects.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    grade_level: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
     )
 
     name: Mapped[str] = mapped_column(
