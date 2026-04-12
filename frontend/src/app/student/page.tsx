@@ -68,7 +68,7 @@ function DashboardSkeleton() {
 export default function StudentDashboardPage() {
   const { data, isLoading, isError } = useQuery<StudentDashboard>({
     queryKey: ["student-dashboard"],
-    queryFn: () => api.get("/student/dashboard").then((res) => res.data),
+    queryFn: () => api.get("/dashboard/student").then((res) => res.data),
   });
 
   if (isLoading) return <DashboardSkeleton />;

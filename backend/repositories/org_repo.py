@@ -79,6 +79,16 @@ class OrgRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_user_latest_request(self, user_id: uuid.UUID) -> OrganizationRequest | None:
+        from sqlalchemy import desc
+        result = await self.db.execute(
+            select(OrganizationRequest)
+            .where(OrganizationRequest.user_id == user_id)
+            .order_by(desc(OrganizationRequest.created_at))
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
     async def get_all_requests(self) -> list[OrganizationRequest]:
         result = await self.db.execute(select(OrganizationRequest))
         return list(result.scalars().all())

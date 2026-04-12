@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import type { Organization, OrgRequest } from "@/types";
 
 interface AdminStats {
   total_users: number;
@@ -20,13 +21,33 @@ interface AdminStats {
 }
 
 export default function AdminDashboardPage() {
-  const { data, isLoading, isError } = useQuery<AdminStats>({
-    queryKey: ["admin", "stats"],
+  const { data: orgs, isLoading: orgsLoading, isError: orgsError } = useQuery<Organization[]>({
+    queryKey: ["admin", "organizations"],
     queryFn: async () => {
-      const res = await api.get<AdminStats>("/admin/stats");
+      const res = await api.get<Organization[]>("/organizations/");
       return res.data;
     },
   });
+
+  const { data: requests, isLoading: requestsLoading, isError: requestsError } = useQuery<OrgRequest[]>({
+    queryKey: ["admin", "org-requests"],
+    queryFn: async () => {
+      const res = await api.get<OrgRequest[]>("/organizations/requests");
+      return res.data;
+    },
+  });
+
+  const isLoading = orgsLoading || requestsLoading;
+  const isError = orgsError || requestsError;
+
+  const data: AdminStats | null =
+    orgs && requests
+      ? {
+          total_users: 0,
+          total_organizations: orgs.length,
+          pending_requests: requests.filter((r) => r.status === "pending").length,
+        }
+      : null;
 
   if (isLoading) {
     return (

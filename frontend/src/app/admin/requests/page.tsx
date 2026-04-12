@@ -68,19 +68,19 @@ export default function AdminRequestsPage() {
   const { data: requests, isLoading, isError } = useQuery<OrgRequest[]>({
     queryKey: ["admin", "org-requests"],
     queryFn: async () => {
-      const res = await api.get<OrgRequest[]>("/admin/org-requests");
+      const res = await api.get<OrgRequest[]>("/organizations/requests");
       return res.data;
     },
   });
 
   const approveMutation = useMutation({
     mutationFn: async ({ id, review_note }: { id: string; review_note: string }) => {
-      await api.put(`/admin/org-requests/${id}/approve`, { review_note });
+      await api.post(`/organizations/requests/${id}/review`, { approve: true, review_note });
     },
     onSuccess: () => {
       toast.success("So'rov muvaffaqiyatli tasdiqlandi");
       queryClient.invalidateQueries({ queryKey: ["admin", "org-requests"] });
-      queryClient.invalidateQueries({ queryKey: ["admin", "stats"] });
+      queryClient.invalidateQueries({ queryKey: ["admin", "organizations"] });
       closeDialog();
     },
     onError: () => {
@@ -90,12 +90,12 @@ export default function AdminRequestsPage() {
 
   const rejectMutation = useMutation({
     mutationFn: async ({ id, review_note }: { id: string; review_note: string }) => {
-      await api.put(`/admin/org-requests/${id}/reject`, { review_note });
+      await api.post(`/organizations/requests/${id}/review`, { approve: false, review_note });
     },
     onSuccess: () => {
       toast.success("So'rov rad etildi");
       queryClient.invalidateQueries({ queryKey: ["admin", "org-requests"] });
-      queryClient.invalidateQueries({ queryKey: ["admin", "stats"] });
+      queryClient.invalidateQueries({ queryKey: ["admin", "organizations"] });
       closeDialog();
     },
     onError: () => {

@@ -1,6 +1,6 @@
 "use client";
 
-import { LayoutDashboard, Users, GraduationCap, School } from "lucide-react";
+import { LayoutDashboard, Users, GraduationCap, School, FilePlus } from "lucide-react";
 import RoleGuard from "@/components/shared/RoleGuard";
 import Navbar from "@/components/shared/Navbar";
 import Sidebar from "@/components/shared/Sidebar";
@@ -25,6 +25,11 @@ const sidebarItems = [
     label: "Sinflar",
     href: "/org/classes",
     icon: <School className="h-4 w-4" />,
+  },
+  {
+    label: "Tashkilot so'rovi",
+    href: "/org/request",
+    icon: <FilePlus className="h-4 w-4" />,
   },
 ];
 

@@ -5,6 +5,7 @@ import { Plus, GraduationCap } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
+import { useAuthStore } from "@/stores/auth.store";
 import type { User } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,22 +30,27 @@ import {
 
 export default function StudentsPage() {
   const queryClient = useQueryClient();
+  const user = useAuthStore((s) => s.user);
+  const orgId = user?.org_id;
   const [open, setOpen] = useState(false);
-  const [email, setEmail] = useState("");
+  const [userId, setUserId] = useState("");
 
-  const { data: students, isLoading } = useQuery<User[]>({
-    queryKey: ["org-students"],
+  const { data: allMembers, isLoading } = useQuery<User[]>({
+    queryKey: ["org-members", orgId],
     queryFn: () =>
-      api.get<User[]>("/org/members", { params: { role: "student" } }).then((r) => r.data),
+      api.get<User[]>(`/organizations/${orgId}/members`).then((r) => r.data),
+    enabled: !!orgId,
   });
 
+  const students = allMembers?.filter((m) => m.role === "student");
+
   const invite = useMutation({
-    mutationFn: (inviteEmail: string) =>
-      api.post("/org/members/invite", { email: inviteEmail, role: "student" }),
+    mutationFn: (memberId: string) =>
+      api.post(`/organizations/${orgId}/members`, { user_id: memberId, role_in_org: "student" }),
     onSuccess: () => {
-      toast.success("O'quvchi muvaffaqiyatli taklif qilindi");
-      queryClient.invalidateQueries({ queryKey: ["org-students"] });
-      setEmail("");
+      toast.success("O'quvchi muvaffaqiyatli qo'shildi");
+      queryClient.invalidateQueries({ queryKey: ["org-members", orgId] });
+      setUserId("");
       setOpen(false);
     },
     onError: () => {
@@ -54,8 +60,8 @@ export default function StudentsPage() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email.trim()) return;
-    invite.mutate(email.trim());
+    if (!userId.trim()) return;
+    invite.mutate(userId.trim());
   };
 
   const formatDate = (dateStr: string) => {
@@ -79,22 +85,22 @@ export default function StudentsPage() {
           </DialogTrigger>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>O&apos;quvchi taklif qilish</DialogTitle>
+              <DialogTitle>O&apos;quvchi qo&apos;shish</DialogTitle>
             </DialogHeader>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
+                <Label htmlFor="userId">Foydalanuvchi ID</Label>
                 <Input
-                  id="email"
-                  type="email"
-                  placeholder="email@example.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  id="userId"
+                  type="text"
+                  placeholder="Foydalanuvchi ID kiriting"
+                  value={userId}
+                  onChange={(e) => setUserId(e.target.value)}
                   required
                 />
               </div>
               <Button type="submit" className="w-full" disabled={invite.isPending}>
-                {invite.isPending ? "Yuborilmoqda..." : "Taklif yuborish"}
+                {invite.isPending ? "Qo'shilmoqda..." : "Qo'shish"}
               </Button>
             </form>
           </DialogContent>
@@ -157,7 +163,7 @@ export default function StudentsPage() {
           <p className="text-muted-foreground mb-4">
             Birinchi o&apos;quvchini taklif qiling
           </p>
-          <Button onClick={() => setOpen(true)}>
+          <Button onClick={() => setOpen(true)} disabled={!orgId}>
             <Plus className="h-4 w-4 mr-2" />
             O&apos;quvchi qo&apos;shish
           </Button>

@@ -9,24 +9,32 @@ interface RoleGuardProps {
   allowedRoles: string[];
 }
 
+function getStoredUser() {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem("eduflow-auth");
+    return raw ? JSON.parse(raw)?.state?.user ?? null : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function RoleGuard({ children, allowedRoles }: RoleGuardProps) {
   const router = useRouter();
-  const user = useAuthStore((s) => s.user);
-  const [checked, setChecked] = useState(false);
+  const storeUser = useAuthStore((s) => s.user);
+  const [authorized, setAuthorized] = useState<boolean | null>(null);
 
   useEffect(() => {
-    if (!user) {
+    // Prefer Zustand user (already hydrated) else fall back to localStorage
+    const user = storeUser ?? getStoredUser();
+    if (!user || !allowedRoles.includes(user.role)) {
       router.push("/login");
-      return;
+      setAuthorized(false);
+    } else {
+      setAuthorized(true);
     }
-    if (!allowedRoles.includes(user.role)) {
-      router.push("/login");
-      return;
-    }
-    setChecked(true);
-  }, [user, allowedRoles, router]);
+  }, [storeUser, allowedRoles, router]);
 
-  if (!checked) return null;
-
+  if (authorized !== true) return null;
   return <>{children}</>;
 }

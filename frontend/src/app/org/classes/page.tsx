@@ -29,7 +29,7 @@ interface OrgClass extends Class {
 export default function ClassesPage() {
   const { data: classes, isLoading } = useQuery<OrgClass[]>({
     queryKey: ["org-classes"],
-    queryFn: () => api.get<OrgClass[]>("/org/classes").then((r) => r.data),
+    queryFn: () => api.get<OrgClass[]>("/classes/").then((r) => r.data),
   });
 
   return (

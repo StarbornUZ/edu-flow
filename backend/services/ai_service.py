@@ -552,9 +552,9 @@ async def stream_claude(
             full_text += text
             yield text
 
-        usage = stream.get_final_message().usage
-        input_tokens = usage.input_tokens
-        output_tokens = usage.output_tokens
+        final_msg = await stream.get_final_message()
+        input_tokens = final_msg.usage.input_tokens
+        output_tokens = final_msg.usage.output_tokens
 
     # Log yozish
     if db and user_id:

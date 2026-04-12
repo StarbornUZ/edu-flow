@@ -68,7 +68,7 @@ export default function StudentCoursesPage() {
 
   const { data: courses, isLoading, isError } = useQuery<Course[]>({
     queryKey: ["student-courses"],
-    queryFn: () => api.get("/student/courses").then((res) => res.data),
+    queryFn: () => api.get("/courses/my").then((res) => res.data),
   });
 
   const joinMutation = useMutation({

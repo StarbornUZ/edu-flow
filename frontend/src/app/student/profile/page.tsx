@@ -5,7 +5,7 @@ import { Star, Flame, Trophy, Award } from "lucide-react";
 import { motion } from "framer-motion";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth.store";
-import type { Badge as BadgeType } from "@/types";
+import type { StudentDashboard } from "@/types";
 import {
   Card,
   CardHeader,
@@ -87,10 +87,12 @@ function ProfileSkeleton() {
 export default function StudentProfilePage() {
   const user = useAuthStore((s) => s.user);
 
-  const { data: badges, isLoading: badgesLoading } = useQuery<BadgeType[]>({
-    queryKey: ["student-badges"],
-    queryFn: () => api.get("/student/badges").then((res) => res.data),
+  const { data: dashboard, isLoading: badgesLoading } = useQuery<StudentDashboard>({
+    queryKey: ["student-dashboard"],
+    queryFn: () => api.get("/dashboard/student").then((res) => res.data),
   });
+
+  const achievements = dashboard?.recent_achievements ?? [];
 
   if (!user) {
     return (
@@ -213,7 +215,7 @@ export default function StudentProfilePage() {
               </Card>
             ))}
           </div>
-        ) : !badges || badges.length === 0 ? (
+        ) : achievements.length === 0 ? (
           <Card>
             <CardContent className="py-8 text-center text-muted-foreground">
               <Award className="h-12 w-12 mx-auto mb-3 opacity-50" />
@@ -225,21 +227,19 @@ export default function StudentProfilePage() {
           </Card>
         ) : (
           <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-            {badges.map((badge, idx) => (
+            {achievements.map((achievement, idx) => (
               <motion.div
-                key={badge.id}
+                key={`${achievement.badge_type}-${idx}`}
                 initial={{ opacity: 0, scale: 0.9 }}
                 animate={{ opacity: 1, scale: 1 }}
                 transition={{ delay: idx * 0.05 }}
               >
                 <Card>
                   <CardContent className="pt-6 text-center">
-                    <span className="text-3xl block mb-2">
-                      {badge.icon || "🏆"}
-                    </span>
-                    <p className="font-medium text-sm">{badge.name}</p>
+                    <Trophy className="h-8 w-8 text-yellow-500 mx-auto mb-2" />
+                    <p className="font-medium text-sm">{achievement.badge_type}</p>
                     <p className="text-xs text-muted-foreground mt-1">
-                      {badge.description}
+                      {new Date(achievement.earned_at).toLocaleDateString("uz-UZ")}
                     </p>
                   </CardContent>
                 </Card>

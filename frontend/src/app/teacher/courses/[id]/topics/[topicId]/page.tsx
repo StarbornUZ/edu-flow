@@ -26,9 +26,11 @@ import MarkdownRenderer from "@/components/shared/MarkdownRenderer";
 
 export default function TopicEditPage() {
   const params = useParams();
+  const courseId = params.id as string;
   const topicId = params.topicId as string;
 
   const [topic, setTopic] = useState<Topic | null>(null);
+  const [moduleId, setModuleId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
@@ -39,23 +41,39 @@ export default function TopicEditPage() {
   const [videoUrl, setVideoUrl] = useState("");
 
   useEffect(() => {
-    api
-      .get<Topic>(`/topics/${topicId}`)
-      .then((res) => {
-        const t = res.data;
-        setTopic(t);
-        setTitle(t.title);
-        setContentMd(t.content_md || "");
-        setVideoUrl(t.video_url || "");
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, [topicId]);
+    const fetchTopic = async () => {
+      try {
+        // Fetch all modules for the course, then find the topic in one of them
+        const modulesRes = await api.get<{ id: string }[]>(`/courses/${courseId}/modules`);
+        const modules = modulesRes.data;
+        for (const mod of modules) {
+          try {
+            const topicRes = await api.get<Topic>(`/modules/${mod.id}/topics/${topicId}`);
+            const t = topicRes.data;
+            setTopic(t);
+            setModuleId(mod.id);
+            setTitle(t.title);
+            setContentMd(t.content_md || "");
+            setVideoUrl(t.video_url || "");
+            return;
+          } catch {
+            // topic not in this module, try next
+          }
+        }
+      } catch {
+        // handle error
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchTopic();
+  }, [courseId, topicId]);
 
   const handleSave = async () => {
+    if (!moduleId) return;
     setSaving(true);
     try {
-      const res = await api.patch<Topic>(`/topics/${topicId}`, {
+      const res = await api.patch<Topic>(`/modules/${moduleId}/topics/${topicId}`, {
         title,
         content_md: contentMd,
         video_url: videoUrl || null,

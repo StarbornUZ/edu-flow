@@ -83,7 +83,7 @@ export default function CourseDetailPage() {
         const [courseRes, modulesRes, classesRes] = await Promise.all([
           api.get<Course>(`/courses/${courseId}`),
           api.get<CourseModule[]>(`/courses/${courseId}/modules`),
-          api.get<Class[]>("/classes"),
+          api.get<Class[]>("/classes/"),
         ]);
         setCourse(courseRes.data);
         setModules(modulesRes.data);
@@ -139,7 +139,7 @@ export default function CourseDetailPage() {
     if (!selectedClassId) return;
     setAssigningClass(true);
     try {
-      await api.post(`/courses/${courseId}/classes/${selectedClassId}`);
+      await api.post(`/classes/${selectedClassId}/enroll`, { course_id: courseId });
       setSelectedClassId("");
     } catch {
       // handle error

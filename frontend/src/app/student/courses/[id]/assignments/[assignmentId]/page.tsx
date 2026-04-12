@@ -74,26 +74,23 @@ export default function StudentAssignmentPage() {
   const [submitted, setSubmitted] = useState(false);
   const [result, setResult] = useState<SubmitResponse | null>(null);
 
-  const { data: assignment, isLoading: assignmentLoading } = useQuery<Assignment>({
+  const { data: assignment, isLoading: assignmentLoading } = useQuery<Assignment & { questions: Question[] }>({
     queryKey: ["assignment", assignmentId],
     queryFn: () =>
       api.get(`/assignments/${assignmentId}`).then((res) => res.data),
   });
 
-  const { data: questions, isLoading: questionsLoading } = useQuery<Question[]>({
-    queryKey: ["assignment-questions", assignmentId],
-    queryFn: () =>
-      api
-        .get(`/assignments/${assignmentId}/questions`)
-        .then((res) => res.data),
-  });
+  const questions = assignment?.questions ?? [];
 
   const submitRef = useRef<(() => void) | null>(null);
 
   const submitMutation = useMutation({
     mutationFn: () =>
       api.post<SubmitResponse>(`/assignments/${assignmentId}/submit`, {
-        answers_json: answers,
+        answers: Object.entries(answers).map(([question_id, answer]) => ({
+          question_id,
+          answer,
+        })),
       }),
     onSuccess: (res) => {
       setSubmitted(true);
@@ -143,7 +140,7 @@ export default function StudentAssignmentPage() {
     setAnswers((prev) => ({ ...prev, [questionId]: value }));
   };
 
-  if (assignmentLoading || questionsLoading) return <AssignmentSkeleton />;
+  if (assignmentLoading) return <AssignmentSkeleton />;
 
   if (!assignment) {
     return (

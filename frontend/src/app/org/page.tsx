@@ -4,7 +4,7 @@ import { Users, GraduationCap, School, BookOpen } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth.store";
-import type { OrgDashboard } from "@/types";
+import type { Class, User } from "@/types";
 import {
   Card,
   CardContent,
@@ -15,34 +15,48 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 export default function OrgDashboardPage() {
   const user = useAuthStore((s) => s.user);
+  const orgId = user?.org_id;
 
-  const { data, isLoading } = useQuery<OrgDashboard>({
-    queryKey: ["org-dashboard"],
-    queryFn: () => api.get<OrgDashboard>("/org/dashboard").then((r) => r.data),
+  const { data: classes, isLoading: classesLoading } = useQuery<Class[]>({
+    queryKey: ["org-classes"],
+    queryFn: () => api.get<Class[]>("/classes/").then((r) => r.data),
+    enabled: !!orgId,
   });
+
+  const { data: members, isLoading: membersLoading } = useQuery<User[]>({
+    queryKey: ["org-members", orgId],
+    queryFn: () =>
+      api.get<User[]>(`/organizations/${orgId}/members`).then((r) => r.data),
+    enabled: !!orgId,
+  });
+
+  const isLoading = classesLoading || membersLoading;
+
+  const teacherCount = members?.filter((m) => m.role === "teacher").length ?? 0;
+  const studentCount = members?.filter((m) => m.role === "student").length ?? 0;
 
   const stats = [
     {
       label: "O'qituvchilar",
-      value: data?.stats.teachers ?? 0,
+      value: teacherCount,
       icon: Users,
       color: "text-blue-600 bg-blue-100",
     },
     {
       label: "O'quvchilar",
-      value: data?.stats.students ?? 0,
+      value: studentCount,
       icon: GraduationCap,
       color: "text-green-600 bg-green-100",
     },
     {
       label: "Sinflar",
-      value: data?.stats.classes ?? 0,
+      value: classes?.length ?? 0,
       icon: School,
       color: "text-purple-600 bg-purple-100",
     },
     {
       label: "Kurslar",
-      value: data?.stats.courses ?? 0,
+      value: 0,
       icon: BookOpen,
       color: "text-orange-600 bg-orange-100",
     },

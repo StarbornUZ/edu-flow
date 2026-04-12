@@ -41,12 +41,18 @@ export default function LoginPage() {
     try {
       setError(null);
       const { data } = await api.post<AuthResponse>("/auth/login", values);
-      setAuth(data.user, data.access_token, data.refresh_token);
+      setAuth(data.user, data.tokens.access_token, data.tokens.refresh_token);
       const route = roleRoutes[data.user.role] || "/login";
       router.push(route);
     } catch (err: unknown) {
-      const axiosErr = err as { response?: { data?: { detail?: string } } };
-      setError(axiosErr.response?.data?.detail || "Kirish xatoligi yuz berdi");
+      const axiosErr = err as { response?: { data?: { detail?: unknown } } };
+      const raw = axiosErr.response?.data?.detail;
+      const message = Array.isArray(raw)
+        ? (raw as { msg?: string }[]).map((e) => e.msg ?? JSON.stringify(e)).join(", ")
+        : typeof raw === "string"
+        ? raw
+        : "Kirish xatoligi yuz berdi";
+      setError(message);
     }
   };
 

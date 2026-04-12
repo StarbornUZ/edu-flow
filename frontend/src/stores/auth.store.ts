@@ -5,6 +5,8 @@ import type { User } from "@/types";
 interface AuthStore {
   user: User | null;
   access_token: string | null;
+  _hasHydrated: boolean;
+  setHasHydrated: (v: boolean) => void;
   setAuth: (user: User, accessToken: string, refreshToken: string) => void;
   updateUser: (partial: Partial<User>) => void;
   logout: () => void;
@@ -16,6 +18,8 @@ export const useAuthStore = create<AuthStore>()(
     (set, get) => ({
       user: null,
       access_token: null,
+      _hasHydrated: false,
+      setHasHydrated: (v) => set({ _hasHydrated: v }),
 
       setAuth: (user, accessToken, refreshToken) => {
         if (typeof window !== "undefined") {
@@ -45,6 +49,9 @@ export const useAuthStore = create<AuthStore>()(
     {
       name: "eduflow-auth",
       partialize: (state) => ({ user: state.user, access_token: state.access_token }),
+      onRehydrateStorage: () => (state) => {
+        state?.setHasHydrated(true);
+      },
     }
   )
 );

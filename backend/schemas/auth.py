@@ -23,8 +23,8 @@ class RegisterRequest(BaseModel):
     @field_validator("role")
     @classmethod
     def role_must_be_valid(cls, v: str) -> str:
-        if v not in ("teacher", "student"):
-            raise ValueError("Rol faqat 'teacher' yoki 'student' bo'lishi mumkin")
+        if v not in ("teacher", "student", "admin", "org_admin", "parent"):
+            raise ValueError("Rol faqat 'teacher', 'student', 'admin', 'org_admin' yoki 'parent' bo'lishi mumkin")
         return v
 
 
@@ -69,6 +69,7 @@ class UserResponse(BaseModel):
     xp: int
     level: int
     streak_count: int
+    org_id: uuid.UUID | None = None
 
 
 class TokenResponse(BaseModel):

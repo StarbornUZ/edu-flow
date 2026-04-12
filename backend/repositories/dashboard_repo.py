@@ -15,6 +15,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
+import sqlalchemy
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -111,7 +112,7 @@ class DashboardRepository:
                 Question.question_text,
                 func.count(SubmissionResult.id).label("total"),
                 func.sum(
-                    func.cast(SubmissionResult.is_correct == False, type_=None)
+                    func.cast(SubmissionResult.is_correct == False, sqlalchemy.Integer)
                 ).label("wrong"),
             )
             .join(Assignment, Question.assignment_id == Assignment.id)
