@@ -51,6 +51,7 @@ class SessionCreate(BaseModel):
     session_type: str = "group_battle"      # "class_battle" | "group_battle"
     class_ids: list[uuid.UUID] = []         # class_battle: 2+ sinf; group_battle: 1 sinf
     course_id: uuid.UUID | None = None
+    module_id: uuid.UUID | None = None
     config: dict = {}
     questions: list[dict] = []
     group_count: int = 2                    # group_battle: guruh soni
@@ -174,12 +175,16 @@ async def create_session(
     # Tegishli talabalarni xabardor qilish
     game_type_label = {
         "blitz": "Blitz Jang",
-        "lucky_card": "Omad Sinovi",
+        "lucky_card": "Omadli Kartalar",
         "relay": "Zanjir Savol",
         "question_duel": "Savol Dueli",
         "territory": "Xarita Jang",
         "pyramid": "Piramida",
         "puzzle": "Topishmoq",
+        "detective": "Detektiv Sherlock",
+        "racing": "Poyga",
+        "tug_of_war": "Arqon Tortish",
+        "crossword": "Krossword",
     }.get(session.game_type.value, session.game_type.value)
 
     for student_id in notif_student_ids:
@@ -197,6 +202,75 @@ async def create_session(
     resp = SessionResponse.model_validate(session)
     resp.teacher_name = current_user.full_name
     return resp
+
+
+# ─── GET /live-sessions/course-questions ─────────────────────────────────────
+
+@router.get("/course-questions", summary="Kurs vazifalaridan MCQ/ordering/matching savollarini olish")
+async def get_course_questions(
+    course_id: uuid.UUID,
+    module_id: uuid.UUID | None = None,
+    current_user: User = Depends(require_teacher),
+    db: AsyncSession = Depends(get_db),
+):
+    """Kurs (yoki modul) vazifalaridan MCQ, ordering, matching savollarini qaytaradi.
+
+    Live session yaratishda import uchun ishlatiladi.
+    """
+    from backend.db.models.assignment import Assignment, Question, QuestionType
+
+    stmt = (
+        select(Assignment)
+        .where(
+            Assignment.course_id == course_id,
+            Assignment.question_type.in_([QuestionType.mcq, QuestionType.ordering, QuestionType.matching]),
+        )
+    )
+    if module_id:
+        stmt = stmt.where(Assignment.module_id == module_id)
+
+    result = await db.execute(stmt)
+    assignments = result.scalars().all()
+
+    live_questions = []
+    for assignment in assignments:
+        q_result = await db.execute(
+            select(Question)
+            .where(Question.assignment_id == assignment.id)
+            .order_by(Question.order_number)
+        )
+        questions = q_result.scalars().all()
+
+        for q in questions:
+            q_type = assignment.question_type.value
+            if q_type == "mcq":
+                live_questions.append({
+                    "question_text": q.question_text,
+                    "question_type": "mcq",
+                    "options": q.options_json if isinstance(q.options_json, list) else [],
+                    "correct_index": q.correct_answer_json if isinstance(q.correct_answer_json, int) else 0,
+                    "assignment_id": str(assignment.id),
+                })
+            elif q_type == "ordering":
+                live_questions.append({
+                    "question_text": q.question_text,
+                    "question_type": "ordering",
+                    "items": q.options_json if isinstance(q.options_json, list) else [],
+                    "correct_order": q.correct_answer_json if isinstance(q.correct_answer_json, list) else [],
+                    "assignment_id": str(assignment.id),
+                })
+            elif q_type == "matching":
+                opts = q.options_json or {}
+                live_questions.append({
+                    "question_text": q.question_text,
+                    "question_type": "matching",
+                    "left": opts.get("left", []),
+                    "right": opts.get("right", []),
+                    "pairs": q.correct_answer_json or {},
+                    "assignment_id": str(assignment.id),
+                })
+
+    return live_questions
 
 
 # ─── GET /live-sessions/{id} ─────────────────────────────────────────────────
@@ -316,31 +390,81 @@ async def start_session(
     if not session:
         raise HTTPException(404, "Sessiya topilmadi")
 
-    await db.execute(
-        sql_update(LiveSession)
-        .where(LiveSession.id == session_id)
-        .values(status=SessionStatus.active)
-    )
-    await db.commit()
+    # lucky_card uchun karta taxtasini yaratish
+    new_config = dict(session.config or {})
+    if session.game_type == GameType.lucky_card:
+        a_count = new_config.get("a_count", 5)
+        b_count = new_config.get("b_count", 3)
+        c_count = new_config.get("c_count", 2)
+        # a-type kartalarning savol indekslari
+        a_question_indices = list(range(min(a_count, len(session.questions or []))))
+        cards = (
+            [{"id": i, "type": "a", "question_index": a_question_indices[i] if i < len(a_question_indices) else 0}
+             for i in range(a_count)]
+            + [{"id": a_count + i, "type": "b"} for i in range(b_count)]
+            + [{"id": a_count + b_count + i, "type": "c"} for i in range(c_count)]
+        )
+        random.shuffle(cards)
+        for card in cards:
+            card["flipped"] = False
 
-    await manager.broadcast(str(session_id), {
-        "type": "session_started",
-        "session_id": str(session_id),
-    })
+        new_config["lucky_card_board"] = cards
+        new_config["current_team_turn_index"] = 0
+        new_config["pending_card_id"] = None  # A-type karta uchun javob kutilayapti
 
-    # Birinchi savolni darhol yuborish
-    if session.questions:
-        q = session.questions[0]
+        await db.execute(
+            sql_update(LiveSession)
+            .where(LiveSession.id == session_id)
+            .values(status=SessionStatus.active, config=new_config)
+        )
+        await db.commit()
+
+        # Barcha guruhlarni yuklash (navbat uchun)
+        teams_result = await db.execute(
+            select(LiveSessionTeam).where(LiveSessionTeam.session_id == session_id)
+        )
+        teams_list = teams_result.scalars().all()
+        first_team = teams_list[0] if teams_list else None
+
         await manager.broadcast(str(session_id), {
-            "type": "next_question",
-            "index": 0,
-            "question": {
-                "question_text": q.get("question_text"),
-                "options": q.get("options"),
-                "time_limit_sec": session.config.get("time_limit_ms", 30000) // 1000,
-            },
-            "total": len(session.questions),
+            "type": "session_started",
+            "session_id": str(session_id),
+            "game_type": "lucky_card",
         })
+        await manager.broadcast(str(session_id), {
+            "type": "lucky_card_init",
+            "board": cards,
+            "current_team": {
+                "id": str(first_team.id), "name": first_team.name, "color": first_team.color
+            } if first_team else None,
+            "teams": [{"id": str(t.id), "name": t.name, "color": t.color} for t in teams_list],
+        })
+    else:
+        await db.execute(
+            sql_update(LiveSession)
+            .where(LiveSession.id == session_id)
+            .values(status=SessionStatus.active)
+        )
+        await db.commit()
+
+        await manager.broadcast(str(session_id), {
+            "type": "session_started",
+            "session_id": str(session_id),
+        })
+
+        # Birinchi savolni darhol yuborish
+        if session.questions:
+            q = session.questions[0]
+            await manager.broadcast(str(session_id), {
+                "type": "next_question",
+                "index": 0,
+                "question": {
+                    "question_text": q.get("question_text"),
+                    "options": q.get("options"),
+                    "time_limit_sec": session.config.get("time_limit_ms", 30000) // 1000,
+                },
+                "total": len(session.questions),
+            })
 
     return {"status": "started"}
 
@@ -421,6 +545,16 @@ async def end_session(
         .where(LiveSession.id == session_id)
         .values(status=SessionStatus.finished)
     )
+
+    # XP ni foydalanuvchi profiliga qo'shish (faqat sessiya tugagandan keyin)
+    from backend.services.gamification_service import calculate_level
+    for participant in participants_list:
+        if participant.xp_earned and participant.xp_earned > 0:
+            user = await db.get(User, participant.student_id)
+            if user:
+                user.xp = (user.xp or 0) + participant.xp_earned
+                user.level = calculate_level(user.xp)
+
     await db.commit()
 
     # MVP uchun ism va jamoa nomini olish
@@ -570,6 +704,10 @@ async def _handle_ws_message(
 
     if msg_type == "submit_answer":
         await _process_answer(session_id, user_id, data, db)
+    elif msg_type == "select_card":
+        await _process_card_select(session_id, user_id, data, db)
+    elif msg_type == "submit_lucky_answer":
+        await _process_lucky_answer(session_id, user_id, data, db)
     elif msg_type == "ping":
         ws = manager.rooms[session_id].get(user_id)
         if ws:
@@ -591,8 +729,25 @@ async def _process_answer(
 
     question = questions[current_idx]
     student_answer = data.get("answer")
-    correct_answer = question.get("correct_index") if "correct_index" in question else question.get("correct_answer")
-    is_correct = str(student_answer) == str(correct_answer)
+    q_type = question.get("question_type", "mcq")
+
+    # Savol turiga qarab to'g'riligini tekshirish
+    if q_type == "ordering":
+        correct_order = question.get("correct_order", [])
+        is_correct = (
+            isinstance(student_answer, list) and
+            [str(x) for x in student_answer] == [str(x) for x in correct_order]
+        )
+    elif q_type == "matching":
+        correct_pairs = question.get("pairs", {})
+        is_correct = (
+            isinstance(student_answer, dict) and
+            {str(k): str(v) for k, v in student_answer.items()} ==
+            {str(k): str(v) for k, v in correct_pairs.items()}
+        )
+    else:
+        correct_answer = question.get("correct_index") if "correct_index" in question else question.get("correct_answer")
+        is_correct = str(student_answer) == str(correct_answer)
 
     time_taken = data.get("time_taken_ms", 0)
     time_limit = session.config.get("time_limit_ms", 30000)
@@ -602,10 +757,6 @@ async def _process_answer(
         score = GameEngine.calculate_blitz_score(is_correct, time_taken, time_limit)
     elif session.game_type == GameType.relay:
         score = GameEngine.calculate_relay_score(is_correct, data.get("is_steal", False))
-    elif session.game_type == GameType.lucky_card:
-        score = GameEngine.calculate_lucky_card_score(
-            data.get("card_type", "question"), is_correct
-        )
     elif session.game_type == GameType.pyramid:
         score = GameEngine.calculate_pyramid_score(data.get("level", 0), is_correct)
     else:
@@ -676,6 +827,229 @@ async def _process_answer(
             for t in teams_result.scalars().all()
         ],
     })
+
+
+async def _process_card_select(
+    session_id: str, user_id: str, data: dict, db: AsyncSession
+) -> None:
+    """Omadli karta tanlash — faqat navbatdagi jamoaning a'zosi tanlay oladi."""
+    session = await db.get(LiveSession, uuid.UUID(session_id))
+    if not session or session.status != SessionStatus.active:
+        return
+    if session.game_type != GameType.lucky_card:
+        return
+
+    config = dict(session.config or {})
+    board = config.get("lucky_card_board", [])
+    card_id = data.get("card_id")
+
+    # Kartani topish
+    card = next((c for c in board if c["id"] == card_id and not c.get("flipped")), None)
+    if not card:
+        return
+
+    # Navbatdagi jamoani tekshirish
+    teams_result = await db.execute(
+        select(LiveSessionTeam).where(LiveSessionTeam.session_id == uuid.UUID(session_id))
+    )
+    teams_list = teams_result.scalars().all()
+    if not teams_list:
+        return
+
+    current_team_idx = config.get("current_team_turn_index", 0)
+    current_team = teams_list[current_team_idx % len(teams_list)]
+
+    # Faqat shu jamoaning a'zosi tanlashi mumkin
+    part_result = await db.execute(
+        select(LiveSessionParticipant).where(
+            LiveSessionParticipant.session_id == uuid.UUID(session_id),
+            LiveSessionParticipant.student_id == uuid.UUID(user_id),
+            LiveSessionParticipant.team_id == current_team.id,
+        )
+    )
+    if not part_result.scalar_one_or_none():
+        return
+
+    # Kartani ochiq qilish
+    for c in board:
+        if c["id"] == card_id:
+            c["flipped"] = True
+            c["flipped_by_team_id"] = str(current_team.id)
+            break
+
+    card_type = card["type"]
+
+    if card_type == "b":
+        # Omadli karta — darhol ball beriladi
+        score, xp = GameEngine.calculate_lucky_card_score("b")
+        await _apply_lucky_score(session_id, user_id, current_team, score, xp, db)
+        config["lucky_card_board"] = board
+        config["pending_card_id"] = None
+        # Navbatni o'tkazish
+        config["current_team_turn_index"] = (current_team_idx + 1) % len(teams_list)
+        next_team = teams_list[config["current_team_turn_index"]]
+
+        await db.execute(sql_update(LiveSession).where(LiveSession.id == uuid.UUID(session_id)).values(config=config))
+        await db.commit()
+
+        await manager.broadcast(session_id, {
+            "type": "card_revealed",
+            "card_id": card_id, "card_type": "b",
+            "score": score, "xp": xp, "emotion": "lucky",
+            "team_id": str(current_team.id), "team_name": current_team.name,
+        })
+        await manager.broadcast(session_id, {
+            "type": "lucky_turn",
+            "team_id": str(next_team.id), "team_name": next_team.name, "team_color": next_team.color,
+        })
+
+    elif card_type == "c":
+        # Omadsiz karta
+        config["lucky_card_board"] = board
+        config["pending_card_id"] = None
+        config["current_team_turn_index"] = (current_team_idx + 1) % len(teams_list)
+        next_team = teams_list[config["current_team_turn_index"]]
+
+        await db.execute(sql_update(LiveSession).where(LiveSession.id == uuid.UUID(session_id)).values(config=config))
+        await db.commit()
+
+        await manager.broadcast(session_id, {
+            "type": "card_revealed",
+            "card_id": card_id, "card_type": "c",
+            "score": 0, "xp": 0, "emotion": "unlucky",
+            "team_id": str(current_team.id), "team_name": current_team.name,
+        })
+        await manager.broadcast(session_id, {
+            "type": "lucky_turn",
+            "team_id": str(next_team.id), "team_name": next_team.name, "team_color": next_team.color,
+        })
+
+    else:
+        # A-type: savol yuborish
+        q_idx = card.get("question_index", 0)
+        question = (session.questions or [{}])[q_idx] if q_idx < len(session.questions or []) else {}
+        config["lucky_card_board"] = board
+        config["pending_card_id"] = card_id
+        config["pending_question_index"] = q_idx
+
+        await db.execute(sql_update(LiveSession).where(LiveSession.id == uuid.UUID(session_id)).values(config=config))
+        await db.commit()
+
+        await manager.broadcast(session_id, {
+            "type": "card_revealed",
+            "card_id": card_id, "card_type": "a",
+            "question": {
+                "question_text": question.get("question_text", ""),
+                "question_type": question.get("question_type", "mcq"),
+                "options": question.get("options") or question.get("items"),
+                "correct_index": question.get("correct_index"),
+            },
+            "team_id": str(current_team.id), "team_name": current_team.name,
+        })
+
+
+async def _process_lucky_answer(
+    session_id: str, user_id: str, data: dict, db: AsyncSession
+) -> None:
+    """Omadli karta (A-type) savoliga javob qayta ishlash."""
+    session = await db.get(LiveSession, uuid.UUID(session_id))
+    if not session or session.status != SessionStatus.active:
+        return
+
+    config = dict(session.config or {})
+    board = config.get("lucky_card_board", [])
+    pending_card_id = config.get("pending_card_id")
+    if pending_card_id is None:
+        return
+
+    q_idx = config.get("pending_question_index", 0)
+    question = (session.questions or [{}])[q_idx] if q_idx < len(session.questions or []) else {}
+
+    student_answer = data.get("answer")
+    correct_answer = question.get("correct_index")
+    is_correct = str(student_answer) == str(correct_answer)
+
+    score, xp = GameEngine.calculate_lucky_card_score("a", is_correct)
+    emotion = "correct" if is_correct else "wrong"
+
+    # Jamoani aniqlash
+    teams_result = await db.execute(
+        select(LiveSessionTeam).where(LiveSessionTeam.session_id == uuid.UUID(session_id))
+    )
+    teams_list = teams_result.scalars().all()
+    current_team_idx = config.get("current_team_turn_index", 0)
+    current_team = teams_list[current_team_idx % len(teams_list)] if teams_list else None
+
+    if current_team and score > 0:
+        await _apply_lucky_score(session_id, user_id, current_team, score, xp, db)
+
+    # Navbat o'tkazish
+    config["pending_card_id"] = None
+    config["pending_question_index"] = None
+    config["current_team_turn_index"] = (current_team_idx + 1) % len(teams_list) if teams_list else 0
+    next_team = teams_list[config["current_team_turn_index"]] if teams_list else None
+
+    await db.execute(sql_update(LiveSession).where(LiveSession.id == uuid.UUID(session_id)).values(config=config))
+    await db.commit()
+
+    await manager.broadcast(session_id, {
+        "type": "lucky_answer_result",
+        "card_id": pending_card_id,
+        "is_correct": is_correct,
+        "score": score, "xp": xp, "emotion": emotion,
+        "user_id": user_id,
+        "team_id": str(current_team.id) if current_team else None,
+    })
+    if next_team:
+        await manager.broadcast(session_id, {
+            "type": "lucky_turn",
+            "team_id": str(next_team.id), "team_name": next_team.name, "team_color": next_team.color,
+        })
+
+    # Leaderboard yangilash
+    teams_result2 = await db.execute(
+        select(LiveSessionTeam).where(LiveSessionTeam.session_id == uuid.UUID(session_id)).order_by(LiveSessionTeam.score.desc())
+    )
+    await manager.broadcast(session_id, {
+        "type": "leaderboard_update",
+        "teams": [{"id": str(t.id), "name": t.name, "score": t.score, "color": t.color} for t in teams_result2.scalars().all()],
+    })
+
+
+async def _apply_lucky_score(
+    session_id: str, user_id: str, team: LiveSessionTeam, score: int, xp: int, db: AsyncSession
+) -> None:
+    """Omadli karta ballini va XP ni participant va jamoaga qo'shish."""
+    part_result = await db.execute(
+        select(LiveSessionParticipant).where(
+            LiveSessionParticipant.session_id == uuid.UUID(session_id),
+            LiveSessionParticipant.student_id == uuid.UUID(user_id),
+        )
+    )
+    participant = part_result.scalar_one_or_none()
+    if not participant:
+        participant = LiveSessionParticipant(
+            session_id=uuid.UUID(session_id),
+            student_id=uuid.UUID(user_id),
+            team_id=team.id,
+        )
+        db.add(participant)
+        await db.flush()
+
+    await db.execute(
+        sql_update(LiveSessionParticipant)
+        .where(LiveSessionParticipant.id == participant.id)
+        .values(
+            personal_score=LiveSessionParticipant.personal_score + score,
+            xp_earned=LiveSessionParticipant.xp_earned + xp,
+        )
+    )
+    if score > 0:
+        await db.execute(
+            sql_update(LiveSessionTeam)
+            .where(LiveSessionTeam.id == team.id)
+            .values(score=LiveSessionTeam.score + score)
+        )
 
 
 # ─── Helper: Guruhlarni avtomatik tuzish ─────────────────────────────────────

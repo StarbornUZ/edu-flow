@@ -65,13 +65,19 @@ class GameEngine:
         return 15 if is_steal else 10
 
     @staticmethod
-    def calculate_lucky_card_score(card_type: str, is_correct: bool = False) -> int:
-        """Omad Sinovi."""
-        if card_type == "lucky":
-            return 10
-        elif card_type == "question" and is_correct:
-            return 10
-        return 0
+    def calculate_lucky_card_score(card_type: str, is_correct: bool = False) -> tuple[int, int]:
+        """Omadli Kartalar: (score, xp) juftligini qaytaradi.
+
+        card_type:
+          "a" — test savoli: to'g'ri=+10pts/+10xp, noto'g'ri=0/0
+          "b" — omadli karta: +12pts/+2xp (savolsiz)
+          "c" — omadsiz karta: 0/0 (savolsiz)
+        """
+        if card_type == "b":
+            return (12, 2)
+        elif card_type == "a" and is_correct:
+            return (10, 10)
+        return (0, 0)
 
     @staticmethod
     def calculate_pyramid_score(level: int, is_correct: bool) -> int:

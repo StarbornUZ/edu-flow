@@ -15,6 +15,7 @@ import {
   CardTitle,
   CardContent,
 } from "@/components/ui/card";
+import LuckyCardBoard, { type LuckyCard, type LuckyCardTeam } from "@/components/live/LuckyCardBoard";
 
 interface WSMessage {
   type: string;
@@ -25,6 +26,17 @@ interface WSMessage {
   question?: { question_text: string; options: string[]; time_limit_sec: number };
   index?: number;
   total?: number;
+  // Lucky card messages
+  board?: LuckyCard[];
+  current_team?: LuckyCardTeam;
+  card_id?: number;
+  card_type?: string;
+  emotion?: "correct" | "wrong" | "lucky" | "unlucky";
+  team_id?: string;
+  team_name?: string;
+  team_color?: string;
+  score?: number;
+  xp?: number;
 }
 
 export default function LiveSessionControlPage() {
@@ -42,6 +54,11 @@ export default function LiveSessionControlPage() {
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [copied, setCopied] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
+
+  // Lucky card state
+  const [luckyBoard, setLuckyBoard] = useState<LuckyCard[]>([]);
+  const [luckyCurrentTeam, setLuckyCurrentTeam] = useState<LuckyCardTeam | null>(null);
+  const [luckyEmotion, setLuckyEmotion] = useState<"correct" | "wrong" | "lucky" | "unlucky" | null>(null);
 
   const handleWSMessage = useCallback((event: MessageEvent) => {
     try {
@@ -69,6 +86,29 @@ export default function LiveSessionControlPage() {
             setMvp({ name: msg.mvp.student_name, team: msg.mvp.team_name ?? null });
           }
           if (Array.isArray(msg.teams)) setTeams(msg.teams);
+          break;
+        case "lucky_card_init":
+          if (Array.isArray(msg.board)) setLuckyBoard(msg.board);
+          if (msg.current_team) setLuckyCurrentTeam(msg.current_team);
+          if (Array.isArray(msg.teams)) setTeams(msg.teams);
+          break;
+        case "card_revealed":
+          if (typeof msg.card_id === "number") {
+            setLuckyBoard((prev) => prev.map((c) => c.id === msg.card_id ? { ...c, flipped: true } : c));
+          }
+          if (msg.emotion) {
+            setLuckyEmotion(msg.emotion);
+            setTimeout(() => setLuckyEmotion(null), 2500);
+          }
+          break;
+        case "lucky_answer_result":
+          if (msg.emotion) {
+            setLuckyEmotion(msg.emotion);
+            setTimeout(() => setLuckyEmotion(null), 2500);
+          }
+          break;
+        case "lucky_turn":
+          if (msg.team_id) setLuckyCurrentTeam({ id: msg.team_id, name: msg.team_name || "", color: msg.team_color || "#3B82F6", score: 0 });
           break;
         default:
           break;
@@ -186,11 +226,15 @@ export default function LiveSessionControlPage() {
           <h1 className="text-2xl font-bold text-gray-900">Jonli musobaqa</h1>
           <div className="flex items-center gap-3 mt-1">
             <Badge variant="secondary">
-              {session.game_type === "blitz"
-                ? "Blitz Jang"
-                : session.game_type === "lucky_card"
-                ? "Omad Sinovi"
-                : "Zanjir Savol"}
+              {({
+                blitz: "Blitz Jang",
+                lucky_card: "Omadli Kartalar",
+                relay: "Zanjir Savol",
+                question_duel: "Savol Dueli",
+                territory: "Xarita Jang",
+                pyramid: "Piramida",
+                puzzle: "Topishmoq",
+              } as Record<string, string>)[session.game_type] ?? session.game_type}
             </Badge>
             <div className="flex items-center gap-1 text-gray-500">
               <Users className="h-4 w-4" />
@@ -209,10 +253,12 @@ export default function LiveSessionControlPage() {
           )}
           {session.status === "active" && (
             <>
-              <Button onClick={handleNext} variant="outline">
-                <SkipForward className="h-4 w-4 mr-2" />
-                Keyingi savol
-              </Button>
+              {session.game_type !== "lucky_card" && (
+                <Button onClick={handleNext} variant="outline">
+                  <SkipForward className="h-4 w-4 mr-2" />
+                  Keyingi savol
+                </Button>
+              )}
               <Button onClick={handleEnd} variant="destructive">
                 <Square className="h-4 w-4 mr-2" />
                 Yakunlash
@@ -255,8 +301,26 @@ export default function LiveSessionControlPage() {
         </motion.div>
       )}
 
+      {/* Lucky card board (teacher view — read-only) */}
+      {session.game_type === "lucky_card" && luckyBoard.length > 0 && !sessionEnded && (
+        <Card className="bg-white border-gray-200 shadow-sm mb-6">
+          <CardHeader>
+            <CardTitle className="text-sm text-gray-500">Omadli Kartalar taxtasi</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <LuckyCardBoard
+              board={luckyBoard}
+              currentTeam={luckyCurrentTeam}
+              teams={teams.map((t) => ({ ...t }))}
+              canSelect={false}
+              emotion={luckyEmotion}
+            />
+          </CardContent>
+        </Card>
+      )}
+
       {/* Current Question */}
-      {currentQuestion && !sessionEnded && (
+      {currentQuestion && !sessionEnded && session.game_type !== "lucky_card" && (
         <Card className="bg-white border-gray-200 shadow-sm mb-6">
           <CardHeader>
             <CardTitle className="text-sm text-gray-500">

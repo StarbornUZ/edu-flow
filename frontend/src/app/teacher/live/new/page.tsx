@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Zap, Dice3, Link2, Plus, Trash2, Sparkles, Loader2,
-  Users, Trophy, ChevronRight, ChevronLeft, Brain, Shuffle, CheckCircle2,
+  Users, Trophy, ChevronRight, ChevronLeft, Shuffle, CheckCircle2,
+  Download, Search, Flag, Dumbbell, Grid3X3, BookOpen,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { api } from "@/lib/api";
@@ -24,39 +25,47 @@ import AIGenerateModal from "@/components/teacher/AIGenerateModal";
 
 interface LiveQuestion {
   question_text: string;
-  options: string[];
-  correct_index: number;
+  options?: string[];
+  correct_index?: number;
+  question_type?: "mcq" | "ordering" | "matching";
+  items?: string[];
+  correct_order?: number[];
+  left?: string[];
+  right?: string[];
+  pairs?: Record<string, string>;
 }
 
 type SessionType = "class_battle" | "group_battle";
-type GroupingMethod = "random" | "ai";
 
 const gameTypes = [
-  { value: "blitz", label: "Blitz Jang", description: "Tez savollar, tez javoblar", icon: Zap },
-  { value: "lucky_card", label: "Omad Sinovi", description: "Tasodifiy savollar bilan musobaqa", icon: Dice3 },
-  { value: "relay", label: "Zanjir Savol", description: "Ketma-ket savollarga javob berish", icon: Link2 },
+  { value: "blitz", label: "Blitz Jang", description: "Tez savollar, tez javoblar", icon: Zap, enabled: true },
+  { value: "lucky_card", label: "Omadli Kartalar", description: "Jamoa navbat bilan kartalarni tanlaydi", icon: Dice3, enabled: true },
+  { value: "relay", label: "Zanjir Savol", description: "Ketma-ket savollarga javob berish", icon: Link2, enabled: false },
+  { value: "detective", label: "Detektiv Sherlock", description: "Bezorini toping!", icon: Search, enabled: false },
+  { value: "racing", label: "Poyga", description: "Tezlikda musobaqa", icon: Flag, enabled: false },
+  { value: "tug_of_war", label: "Arqon Tortish", description: "Jamoalar kurashi", icon: Dumbbell, enabled: false },
+  { value: "crossword", label: "Krossword", description: "So'z topishmoqlari", icon: Grid3X3, enabled: false },
 ];
 
 export default function NewLiveSessionPage() {
   const router = useRouter();
 
-  // Step state
   const [step, setStep] = useState<1 | 2 | 3>(1);
-
-  // Session type step
   const [sessionType, setSessionType] = useState<SessionType>("group_battle");
   const [classes, setClasses] = useState<Class[]>([]);
   const [selectedClassIds, setSelectedClassIds] = useState<string[]>([]);
   const [groupCount, setGroupCount] = useState(2);
-  const [groupingMethod, setGroupingMethod] = useState<GroupingMethod>("random");
 
-  // Game settings step
   const [courses, setCourses] = useState<Course[]>([]);
   const [selectedGameType, setSelectedGameType] = useState("blitz");
   const [courseId, setCourseId] = useState("");
   const [timeLimitMs, setTimeLimitMs] = useState("15000");
 
-  // Questions step
+  // Lucky card config
+  const [luckyA, setLuckyA] = useState(5);
+  const [luckyB, setLuckyB] = useState(3);
+  const [luckyC, setLuckyC] = useState(2);
+
   const [questions, setQuestions] = useState<LiveQuestion[]>([]);
   const [currentQuestion, setCurrentQuestion] = useState("");
   const [currentOptions, setCurrentOptions] = useState(["", "", "", ""]);
@@ -64,6 +73,12 @@ export default function NewLiveSessionPage() {
   const [aiModalOpen, setAiModalOpen] = useState(false);
   const [aiTopic, setAiTopic] = useState("");
   const [saving, setSaving] = useState(false);
+
+  // Course questions import
+  const [importLoading, setImportLoading] = useState(false);
+  const [importQuestions, setImportQuestions] = useState<LiveQuestion[]>([]);
+  const [selectedImportIds, setSelectedImportIds] = useState<Set<number>>(new Set());
+  const [showImport, setShowImport] = useState(false);
 
   useEffect(() => {
     api.get<Class[]>("/classes").then((r) => setClasses(r.data)).catch(() => {});
@@ -89,7 +104,7 @@ export default function NewLiveSessionPage() {
     if (!currentQuestion || currentOptions.some((o) => !o)) return;
     setQuestions((prev) => [
       ...prev,
-      { question_text: currentQuestion, options: [...currentOptions], correct_index: correctIndex },
+      { question_text: currentQuestion, options: [...currentOptions], correct_index: correctIndex, question_type: "mcq" },
     ]);
     setCurrentQuestion("");
     setCurrentOptions(["", "", "", ""]);
@@ -100,22 +115,60 @@ export default function NewLiveSessionPage() {
     setQuestions((prev) => prev.filter((_, i) => i !== index));
   };
 
+  const loadImportQuestions = async () => {
+    if (!courseId) return;
+    setImportLoading(true);
+    try {
+      const res = await api.get<LiveQuestion[]>(`/live-sessions/course-questions?course_id=${courseId}`);
+      setImportQuestions(res.data);
+      setSelectedImportIds(new Set());
+      setShowImport(true);
+    } catch {
+      // handle error
+    } finally {
+      setImportLoading(false);
+    }
+  };
+
+  const addImportedQuestions = () => {
+    const toAdd = importQuestions.filter((_, i) => selectedImportIds.has(i));
+    setQuestions((prev) => [...prev, ...toAdd]);
+    setShowImport(false);
+    setSelectedImportIds(new Set());
+  };
+
   const handleCreate = async () => {
-    if (questions.length === 0) return;
+    const isLuckyCard = selectedGameType === "lucky_card";
+    if (!isLuckyCard && questions.length === 0) return;
+    if (isLuckyCard && luckyA > 0 && questions.length === 0) return;
+
     setSaving(true);
     try {
+      const config: Record<string, unknown> = { time_limit_ms: parseInt(timeLimitMs) };
+      if (isLuckyCard) {
+        config.a_count = luckyA;
+        config.b_count = luckyB;
+        config.c_count = luckyC;
+      }
+
       const res = await api.post<{ id: string }>("/live-sessions", {
         game_type: selectedGameType,
         session_type: sessionType,
         class_ids: selectedClassIds,
         group_count: groupCount,
-        grouping_method: groupingMethod,
+        grouping_method: "random",
         course_id: courseId || null,
-        config: { time_limit_ms: parseInt(timeLimitMs) },
+        config,
         questions: questions.map((q) => ({
           question_text: q.question_text,
+          question_type: q.question_type || "mcq",
           options: q.options,
           correct_index: q.correct_index,
+          items: q.items,
+          correct_order: q.correct_order,
+          left: q.left,
+          right: q.right,
+          pairs: q.pairs,
         })),
       });
       router.push(`/teacher/live/${res.data.id}`);
@@ -127,15 +180,46 @@ export default function NewLiveSessionPage() {
   };
 
   const handleAiResult = (data: unknown) => {
+    let qs: unknown[] = [];
     if (Array.isArray(data)) {
-      const aiQuestions: LiveQuestion[] = data.map((q: Record<string, unknown>) => ({
-        question_text: (q.question_text as string) || "",
-        options: Array.isArray(q.options) ? (q.options as string[]) : ["", "", "", ""],
-        correct_index: typeof q.correct_index === "number" ? q.correct_index : 0,
-      }));
-      setQuestions((prev) => [...prev, ...aiQuestions]);
+      qs = data;
+    } else if (data && typeof data === "object") {
+      const d = data as Record<string, unknown>;
+      if (Array.isArray(d.questions)) qs = d.questions as unknown[];
     }
+
+    const aiQuestions: LiveQuestion[] = qs.map((q) => {
+      const raw = q as Record<string, unknown>;
+      return {
+        question_text: (raw.question_text as string) || "",
+        question_type: "mcq",
+        options: Array.isArray(raw.options_json)
+          ? (raw.options_json as string[])
+          : Array.isArray(raw.options)
+          ? (raw.options as string[])
+          : ["", "", "", ""],
+        correct_index:
+          typeof raw.correct_answer_json === "number"
+            ? raw.correct_answer_json
+            : typeof raw.correct_index === "number"
+            ? raw.correct_index
+            : 0,
+      };
+    });
+
+    if (aiQuestions.length > 0) setQuestions((prev) => [...prev, ...aiQuestions]);
     setAiModalOpen(false);
+  };
+
+  const isLuckyCard = selectedGameType === "lucky_card";
+  const canCreate = isLuckyCard
+    ? (luckyA === 0 || questions.length > 0)
+    : questions.length > 0;
+
+  const getQuestionTypeLabel = (q: LiveQuestion) => {
+    if (q.question_type === "ordering") return "Tartib";
+    if (q.question_type === "matching") return "Juftlash";
+    return "MCQ";
   };
 
   return (
@@ -155,7 +239,6 @@ export default function NewLiveSessionPage() {
       {/* ── STEP 1: Session type & class selection ── */}
       {step === 1 && (
         <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="space-y-6">
-          {/* Session type */}
           <Card>
             <CardHeader>
               <CardTitle className="text-lg">Musobaqa turi</CardTitle>
@@ -166,13 +249,13 @@ export default function NewLiveSessionPage() {
                 {
                   value: "class_battle" as SessionType,
                   label: "Sinflar o'rtasida",
-                  desc: "Ikki yoki undan ko'p sinf raqobatlashadi. Har bir sinf — alohida jamoa.",
+                  desc: "Ikki yoki undan ko'p sinf raqobatlashadi.",
                   icon: Trophy,
                 },
                 {
                   value: "group_battle" as SessionType,
                   label: "Guruhlar o'rtasida",
-                  desc: "Bir sinfning o'quvchilari tasodifiy yoki AI asosida guruhlarga bo'linadi.",
+                  desc: "Bir sinfning o'quvchilari guruhlarga bo'linadi.",
                   icon: Users,
                 },
               ] as const).map((opt) => (
@@ -181,15 +264,10 @@ export default function NewLiveSessionPage() {
                     className={`cursor-pointer transition-colors ${
                       sessionType === opt.value ? "border-primary bg-primary/5" : "hover:border-muted-foreground/30"
                     }`}
-                    onClick={() => {
-                      setSessionType(opt.value);
-                      setSelectedClassIds([]);
-                    }}
+                    onClick={() => { setSessionType(opt.value); setSelectedClassIds([]); }}
                   >
                     <CardContent className="pt-6 text-center space-y-2">
-                      <opt.icon
-                        className={`h-8 w-8 mx-auto ${sessionType === opt.value ? "text-primary" : "text-muted-foreground"}`}
-                      />
+                      <opt.icon className={`h-8 w-8 mx-auto ${sessionType === opt.value ? "text-primary" : "text-muted-foreground"}`} />
                       <p className="font-semibold text-sm">{opt.label}</p>
                       <p className="text-xs text-muted-foreground">{opt.desc}</p>
                     </CardContent>
@@ -199,7 +277,6 @@ export default function NewLiveSessionPage() {
             </CardContent>
           </Card>
 
-          {/* Class selection */}
           <Card>
             <CardHeader>
               <CardTitle className="text-lg">
@@ -237,73 +314,35 @@ export default function NewLiveSessionPage() {
             </CardContent>
           </Card>
 
-          {/* Group battle options */}
           {sessionType === "group_battle" && (
             <Card>
-              <CardHeader>
-                <CardTitle className="text-lg">Guruh sozlamalari</CardTitle>
-              </CardHeader>
+              <CardHeader><CardTitle className="text-lg">Guruh sozlamalari</CardTitle></CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
                   <Label>Guruhlar soni</Label>
                   <div className="flex gap-2">
                     {[2, 3, 4].map((n) => (
-                      <Button
-                        key={n}
-                        variant={groupCount === n ? "default" : "outline"}
-                        size="sm"
-                        onClick={() => setGroupCount(n)}
-                      >
+                      <Button key={n} variant={groupCount === n ? "default" : "outline"} size="sm" onClick={() => setGroupCount(n)}>
                         {n} guruh
                       </Button>
                     ))}
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <Label>Guruhga bo'lish usuli</Label>
-                  <div className="grid gap-3 md:grid-cols-2">
-                    {([
-                      {
-                        value: "random" as GroupingMethod,
-                        label: "Tasodifiy",
-                        desc: "O'quvchilar tasodifiy guruhlarga bo'linadi",
-                        icon: Shuffle,
-                      },
-                      {
-                        value: "ai" as GroupingMethod,
-                        label: "AI asosida",
-                        desc: "AI o'quvchi natijalarini tahlil qilib balanced guruhlar tuzadi",
-                        icon: Brain,
-                      },
-                    ] as const).map((opt) => (
-                      <div
-                        key={opt.value}
-                        className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
-                          groupingMethod === opt.value ? "border-primary bg-primary/5" : "hover:border-muted-foreground/30"
-                        }`}
-                        onClick={() => setGroupingMethod(opt.value)}
-                      >
-                        <opt.icon
-                          className={`h-5 w-5 mt-0.5 shrink-0 ${groupingMethod === opt.value ? "text-primary" : "text-muted-foreground"}`}
-                        />
-                        <div>
-                          <p className="font-medium text-sm">{opt.label}</p>
-                          <p className="text-xs text-muted-foreground">{opt.desc}</p>
-                        </div>
-                      </div>
-                    ))}
+                  <Label>Guruhga bo&apos;lish usuli</Label>
+                  <div className="flex items-start gap-3 p-3 rounded-lg border border-primary bg-primary/5">
+                    <Shuffle className="h-5 w-5 mt-0.5 shrink-0 text-primary" />
+                    <div>
+                      <p className="font-medium text-sm">Tasodifiy</p>
+                      <p className="text-xs text-muted-foreground">O&apos;quvchilar tasodifiy guruhlarga bo&apos;linadi</p>
+                    </div>
                   </div>
                 </div>
               </CardContent>
             </Card>
           )}
 
-          <Button
-            className="w-full"
-            size="lg"
-            disabled={!canProceedStep1()}
-            onClick={() => setStep(2)}
-          >
+          <Button className="w-full" size="lg" disabled={!canProceedStep1()} onClick={() => setStep(2)}>
             Davom etish
             <ChevronRight className="h-4 w-4 ml-1" />
           </Button>
@@ -313,25 +352,27 @@ export default function NewLiveSessionPage() {
       {/* ── STEP 2: Game type & settings ── */}
       {step === 2 && (
         <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-6">
-          {/* Game type */}
           <Card>
-            <CardHeader>
-              <CardTitle className="text-lg">O&apos;yin turi</CardTitle>
-            </CardHeader>
+            <CardHeader><CardTitle className="text-lg">O&apos;yin turi</CardTitle></CardHeader>
             <CardContent>
               <div className="grid gap-3 md:grid-cols-3">
                 {gameTypes.map((gt) => (
-                  <motion.div key={gt.value} whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
+                  <motion.div key={gt.value} whileHover={gt.enabled ? { scale: 1.02 } : {}} whileTap={gt.enabled ? { scale: 0.98 } : {}}>
                     <Card
-                      className={`cursor-pointer transition-colors ${
-                        selectedGameType === gt.value ? "border-primary bg-primary/5" : "hover:border-muted-foreground/30"
+                      className={`transition-colors relative ${
+                        gt.enabled
+                          ? selectedGameType === gt.value
+                            ? "cursor-pointer border-primary bg-primary/5"
+                            : "cursor-pointer hover:border-muted-foreground/30"
+                          : "cursor-not-allowed opacity-50"
                       }`}
-                      onClick={() => setSelectedGameType(gt.value)}
+                      onClick={() => gt.enabled && setSelectedGameType(gt.value)}
                     >
+                      {!gt.enabled && (
+                        <Badge className="absolute top-2 right-2 text-xs" variant="secondary">Tez kunda</Badge>
+                      )}
                       <CardContent className="pt-6 text-center">
-                        <gt.icon
-                          className={`h-8 w-8 mx-auto mb-2 ${selectedGameType === gt.value ? "text-primary" : "text-muted-foreground"}`}
-                        />
+                        <gt.icon className={`h-8 w-8 mx-auto mb-2 ${selectedGameType === gt.value && gt.enabled ? "text-primary" : "text-muted-foreground"}`} />
                         <p className="font-medium text-sm">{gt.label}</p>
                         <p className="text-xs text-muted-foreground mt-1">{gt.description}</p>
                       </CardContent>
@@ -342,11 +383,8 @@ export default function NewLiveSessionPage() {
             </CardContent>
           </Card>
 
-          {/* Settings */}
           <Card>
-            <CardHeader>
-              <CardTitle className="text-lg">Sozlamalar</CardTitle>
-            </CardHeader>
+            <CardHeader><CardTitle className="text-lg">Sozlamalar</CardTitle></CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
                 <Label>Kurs (ixtiyoriy)</Label>
@@ -373,6 +411,30 @@ export default function NewLiveSessionPage() {
                   {Math.round(parseInt(timeLimitMs || "0") / 1000)} soniya
                 </p>
               </div>
+
+              {/* Lucky card config */}
+              {isLuckyCard && (
+                <div className="space-y-3 pt-2 border-t">
+                  <p className="text-sm font-medium">Omadli Kartalar sozlamalari</p>
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="space-y-1">
+                      <Label className="text-xs text-red-600">A — Test savollar</Label>
+                      <Input type="number" min={0} max={20} value={luckyA} onChange={(e) => setLuckyA(parseInt(e.target.value) || 0)} />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs text-yellow-600">B — Omadli kartalar</Label>
+                      <Input type="number" min={0} max={20} value={luckyB} onChange={(e) => setLuckyB(parseInt(e.target.value) || 0)} />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs text-gray-600">C — Omadsiz kartalar</Label>
+                      <Input type="number" min={0} max={20} value={luckyC} onChange={(e) => setLuckyC(parseInt(e.target.value) || 0)} />
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Jami: {luckyA + luckyB + luckyC} ta karta. A-kartalar uchun {luckyA} ta savol kerak.
+                  </p>
+                </div>
+              )}
             </CardContent>
           </Card>
 
@@ -395,9 +457,17 @@ export default function NewLiveSessionPage() {
           <Card>
             <CardHeader>
               <div className="flex items-center justify-between">
-                <CardTitle className="text-lg">Savollar ({questions.length})</CardTitle>
+                <CardTitle className="text-lg">
+                  Savollar ({questions.length}{isLuckyCard && luckyA > 0 ? ` / ${luckyA} kerak` : ""})
+                </CardTitle>
               </div>
-              <div className="flex gap-2 items-center">
+              <div className="flex gap-2 items-center flex-wrap">
+                {courseId && (
+                  <Button variant="outline" size="sm" onClick={loadImportQuestions} disabled={importLoading}>
+                    {importLoading ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <BookOpen className="h-4 w-4 mr-1" />}
+                    Kursdan import
+                  </Button>
+                )}
                 <Input
                   placeholder="Mavzu (masalan: Kvadrat tenglamalar)"
                   value={aiTopic}
@@ -411,19 +481,80 @@ export default function NewLiveSessionPage() {
               </div>
             </CardHeader>
             <CardContent className="space-y-4">
+              {/* Import panel */}
+              {showImport && importQuestions.length > 0 && (
+                <div className="border rounded-lg p-4 space-y-3 bg-muted/30">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-medium">
+                      Kursdan {importQuestions.length} ta savol topildi
+                      <Button variant="ghost" size="sm" className="ml-2 text-xs" onClick={() => {
+                        if (selectedImportIds.size === importQuestions.length) {
+                          setSelectedImportIds(new Set());
+                        } else {
+                          setSelectedImportIds(new Set(importQuestions.map((_, i) => i)));
+                        }
+                      }}>
+                        {selectedImportIds.size === importQuestions.length ? "Hammasini bekor qilish" : "Hammasini tanlash"}
+                      </Button>
+                    </p>
+                    <Button size="sm" onClick={addImportedQuestions} disabled={selectedImportIds.size === 0}>
+                      <Download className="h-3 w-3 mr-1" />
+                      {selectedImportIds.size} ta qo&apos;shish
+                    </Button>
+                  </div>
+                  <div className="space-y-1 max-h-48 overflow-auto">
+                    {importQuestions.map((q, i) => (
+                      <div
+                        key={i}
+                        className={`flex items-start gap-2 p-2 rounded border cursor-pointer text-sm transition-colors ${
+                          selectedImportIds.has(i) ? "border-primary bg-primary/5" : "hover:border-muted-foreground/30"
+                        }`}
+                        onClick={() => {
+                          setSelectedImportIds((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(i)) next.delete(i); else next.add(i);
+                            return next;
+                          });
+                        }}
+                      >
+                        <div className={`h-4 w-4 rounded border shrink-0 mt-0.5 flex items-center justify-center ${selectedImportIds.has(i) ? "border-primary bg-primary" : "border-muted-foreground/40"}`}>
+                          {selectedImportIds.has(i) && <CheckCircle2 className="h-3 w-3 text-white" />}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <span className="line-clamp-1">{q.question_text}</span>
+                        </div>
+                        <Badge variant="outline" className="text-xs shrink-0">{getQuestionTypeLabel(q)}</Badge>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Existing questions list */}
               {questions.length > 0 && (
                 <div className="space-y-2">
                   {questions.map((q, idx) => (
                     <div key={idx} className="flex items-start justify-between p-3 rounded-lg border">
                       <div className="flex-1">
-                        <p className="text-sm font-medium">{idx + 1}. {q.question_text}</p>
-                        <div className="mt-1 flex flex-wrap gap-1">
-                          {q.options.map((opt, oi) => (
-                            <Badge key={oi} variant={oi === q.correct_index ? "default" : "outline"} className="text-xs">
-                              {String.fromCharCode(65 + oi)}) {opt}
-                            </Badge>
-                          ))}
+                        <div className="flex items-center gap-2 mb-1">
+                          <p className="text-sm font-medium">{idx + 1}. {q.question_text}</p>
+                          <Badge variant="outline" className="text-xs">{getQuestionTypeLabel(q)}</Badge>
                         </div>
+                        {q.question_type === "mcq" && q.options && (
+                          <div className="flex flex-wrap gap-1">
+                            {q.options.map((opt, oi) => (
+                              <Badge key={oi} variant={oi === q.correct_index ? "default" : "outline"} className="text-xs">
+                                {String.fromCharCode(65 + oi)}) {opt}
+                              </Badge>
+                            ))}
+                          </div>
+                        )}
+                        {q.question_type === "ordering" && q.items && (
+                          <p className="text-xs text-muted-foreground">{q.items.join(" → ")}</p>
+                        )}
+                        {q.question_type === "matching" && q.left && (
+                          <p className="text-xs text-muted-foreground">{q.left.slice(0, 3).join(", ")}...</p>
+                        )}
                       </div>
                       <Button variant="ghost" size="sm" onClick={() => removeQuestion(idx)}>
                         <Trash2 className="h-4 w-4 text-red-500" />
@@ -433,9 +564,9 @@ export default function NewLiveSessionPage() {
                 </div>
               )}
 
-              {/* Add question */}
+              {/* Add MCQ question manually */}
               <div className="border rounded-lg p-4 space-y-3">
-                <p className="text-sm font-medium">Yangi savol qo&apos;shish</p>
+                <p className="text-sm font-medium">Yangi savol qo&apos;shish (MCQ)</p>
                 <div className="space-y-2">
                   <Label htmlFor="live-q-text">Savol matni</Label>
                   <Textarea
@@ -491,7 +622,7 @@ export default function NewLiveSessionPage() {
             </Button>
             <Button
               onClick={handleCreate}
-              disabled={saving || questions.length === 0}
+              disabled={saving || !canCreate}
               className="flex-1"
               size="lg"
             >
@@ -511,7 +642,7 @@ export default function NewLiveSessionPage() {
           topic: aiTopic,
           course_id: courseId || null,
           question_type: "mcq",
-          count: 5,
+          count: isLuckyCard ? luckyA : 5,
           game_type: selectedGameType,
         }}
         onResult={handleAiResult}

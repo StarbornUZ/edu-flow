@@ -9,8 +9,9 @@ import { Card, CardContent } from "@/components/ui/card";
 import { getWsUrl, api } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth.store";
 import type { LiveSessionTeam } from "@/types";
+import LuckyCardBoard, { type LuckyCard, type LuckyCardTeam, type LuckyCardQuestion } from "@/components/live/LuckyCardBoard";
 
-type PageState = "lobby" | "question" | "answered" | "ended";
+type PageState = "lobby" | "question" | "answered" | "ended" | "lucky_card";
 
 interface Question {
   question_text: string;
@@ -27,13 +28,20 @@ interface WSMessage {
   total?: number;
   is_correct?: boolean;
   score?: number;
+  xp?: number;
   teams?: LiveSessionTeam[];
   winner_team?: string;
   mvp?: { student_id: string; student_name?: string; team_name?: string | null; score: number } | null;
-  // team_assigned
   team_id?: string;
   team_name?: string;
   team_color?: string;
+  // Lucky card
+  board?: LuckyCard[];
+  current_team?: LuckyCardTeam;
+  card_id?: number;
+  card_type?: string;
+  emotion?: "correct" | "wrong" | "lucky" | "unlucky";
+  game_type?: string;
 }
 
 interface MyResult {
@@ -75,10 +83,23 @@ export default function StudentLivePage() {
   const wsRef = useRef<WebSocket | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Fetch session on mount — if already finished, show ended state immediately
+  // Lucky card state
+  const [luckyBoard, setLuckyBoard] = useState<LuckyCard[]>([]);
+  const [luckyCurrentTeam, setLuckyCurrentTeam] = useState<LuckyCardTeam | null>(null);
+  const [luckyAllTeams, setLuckyAllTeams] = useState<LuckyCardTeam[]>([]);
+  const [luckyPendingQuestion, setLuckyPendingQuestion] = useState<LuckyCardQuestion | null>(null);
+  const [luckyPendingCardId, setLuckyPendingCardId] = useState<number | null>(null);
+  const [luckyEmotion, setLuckyEmotion] = useState<"correct" | "wrong" | "lucky" | "unlucky" | null>(null);
+  const [sessionXp, setSessionXp] = useState(0);
+  const [isLuckyCardGame, setIsLuckyCardGame] = useState(false);
+
+  // Fetch session on mount — check game type and status
   useEffect(() => {
-    api.get<{ status: string }>(`/live-sessions/${sessionId}`)
+    api.get<{ status: string; game_type: string }>(`/live-sessions/${sessionId}`)
       .then((r) => {
+        if (r.data.game_type === "lucky_card") {
+          setIsLuckyCardGame(true);
+        }
         if (r.data.status === "finished") {
           api.get<MyResult>(`/live-sessions/${sessionId}/my-results`)
             .then((res) => setMyResults(res.data))
@@ -119,6 +140,48 @@ export default function StudentLivePage() {
           }
           break;
         case "session_started":
+          if (msg.game_type === "lucky_card") {
+            setIsLuckyCardGame(true);
+            setState("lucky_card");
+          }
+          break;
+        case "lucky_card_init":
+          if (Array.isArray(msg.board)) setLuckyBoard(msg.board);
+          if (msg.current_team) setLuckyCurrentTeam(msg.current_team);
+          if (Array.isArray(msg.teams)) setLuckyAllTeams(msg.teams);
+          setState("lucky_card");
+          break;
+        case "card_revealed":
+          if (typeof msg.card_id === "number") {
+            setLuckyBoard((prev) => prev.map((c) => c.id === msg.card_id ? { ...c, flipped: true } : c));
+            setLuckyPendingCardId(msg.card_id);
+          }
+          if (msg.card_type === "a" && (msg as Record<string, unknown>).question) {
+            setLuckyPendingQuestion((msg as Record<string, unknown>).question as LuckyCardQuestion);
+          }
+          if (msg.emotion) {
+            setLuckyEmotion(msg.emotion);
+            setTimeout(() => setLuckyEmotion(null), 2500);
+          }
+          break;
+        case "lucky_answer_result":
+          setLuckyPendingQuestion(null);
+          setLuckyPendingCardId(null);
+          if (msg.user_id === currentUser?.id && msg.xp && msg.xp > 0) {
+            setSessionXp((prev) => prev + (msg.xp || 0));
+          }
+          if (msg.user_id === currentUser?.id && msg.score && msg.score > 0) {
+            setMyScore((prev) => prev + (msg.score || 0));
+          }
+          if (msg.emotion) {
+            setLuckyEmotion(msg.emotion);
+            setTimeout(() => setLuckyEmotion(null), 2500);
+          }
+          break;
+        case "lucky_turn":
+          if (msg.team_id) {
+            setLuckyCurrentTeam({ id: msg.team_id, name: msg.team_name || "", color: msg.team_color || "#3B82F6", score: 0 });
+          }
           break;
         case "next_question":
           if (msg.question) {
@@ -338,6 +401,73 @@ export default function StudentLivePage() {
               )}
             </AnimatePresence>
           </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── LUCKY CARD GAME ────────────────────────────────────────────────────────
+  if (state === "lucky_card" || (isLuckyCardGame && state === "lobby")) {
+    const isMyTurn = luckyCurrentTeam?.id === myTeam?.id;
+    const canSelect = isMyTurn && !luckyPendingQuestion;
+
+    const allTeamsWithScore = luckyAllTeams.map((t) => ({
+      ...t,
+      score: teams.find((tt) => tt.id === t.id)?.score ?? t.score,
+    }));
+
+    return (
+      <div className="min-h-screen bg-white p-4">
+        {/* Team badge */}
+        {myTeam && (
+          <div className="flex items-center justify-between mb-4">
+            <div
+              className="px-4 py-1.5 rounded-full text-white text-sm font-semibold"
+              style={{ backgroundColor: myTeam.color }}
+            >
+              {myTeam.name} jamoasi
+            </div>
+            <div className="text-sm text-gray-500">
+              <span className="font-bold text-gray-900">{myScore}</span> ball
+              {sessionXp > 0 && (
+                <span className="ml-2 text-xs text-muted-foreground">({sessionXp} XP)</span>
+              )}
+            </div>
+          </div>
+        )}
+
+        {luckyBoard.length === 0 ? (
+          <div className="text-center py-20">
+            <div className="flex gap-1 justify-center mb-4">
+              {[0, 1, 2].map((i) => (
+                <motion.div key={i} className="h-2 w-2 rounded-full bg-blue-500"
+                  animate={{ opacity: [1, 0.3, 1] }} transition={{ duration: 1.2, repeat: Infinity, delay: i * 0.2 }} />
+              ))}
+            </div>
+            <p className="text-gray-500">O&apos;qituvchi o&apos;yinni boshlaganini kutilmoqda...</p>
+          </div>
+        ) : (
+          <LuckyCardBoard
+            board={luckyBoard}
+            currentTeam={luckyCurrentTeam}
+            teams={allTeamsWithScore}
+            myTeamId={myTeam?.id}
+            canSelect={canSelect}
+            pendingQuestion={luckyPendingQuestion}
+            pendingCardId={luckyPendingCardId}
+            emotion={luckyEmotion}
+            sessionXp={sessionXp}
+            onSelectCard={(cardId) => {
+              wsRef.current?.send(JSON.stringify({ type: "select_card", card_id: cardId }));
+            }}
+            onSubmitAnswer={(answer) => {
+              wsRef.current?.send(JSON.stringify({
+                type: "submit_lucky_answer",
+                answer,
+                card_id: luckyPendingCardId,
+              }));
+            }}
+          />
         )}
       </div>
     );

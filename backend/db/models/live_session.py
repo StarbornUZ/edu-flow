@@ -14,6 +14,11 @@ class GameType(str, enum.Enum):
     territory = "territory"
     pyramid = "pyramid"
     puzzle = "puzzle"
+    # Placeholder games (UI-only, disabled):
+    detective = "detective"
+    racing = "racing"
+    tug_of_war = "tug_of_war"
+    crossword = "crossword"
 
 
 class SessionStatus(str, enum.Enum):
@@ -84,6 +89,9 @@ class LiveSessionParticipant(Base, TimestampMixin):
         UUID(as_uuid=True), ForeignKey("live_session_teams.id", ondelete="SET NULL"), nullable=True
     )
     personal_score: Mapped[int] = mapped_column(default=0, nullable=False)
+    # XP earned during this session — applied to User.xp only after session ends
+    # DB: ALTER TABLE live_session_participants ADD COLUMN xp_earned INTEGER NOT NULL DEFAULT 0;
+    xp_earned: Mapped[int] = mapped_column(default=0, nullable=False)
     answers: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     is_mvp: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
