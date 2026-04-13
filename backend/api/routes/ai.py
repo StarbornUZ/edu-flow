@@ -115,6 +115,52 @@ async def generate_course(
     )
 
 
+# ─── POST /ai/generate-course-v2 ─────────────────────────────────────────────
+
+class CourseGenerateV2Request(BaseModel):
+    subject: str
+    grade_level: int
+    goal: str
+    module_count: int = 3
+    context_text: str = ""   # ixtiyoriy: darslik/qo'llanma matni
+
+
+@router.post(
+    "/generate-course-v2",
+    summary="Phased AI course generation — tool_use, structured SSE (Teacher)",
+)
+async def generate_course_v2(
+    body: CourseGenerateV2Request,
+    teacher: CurrentTeacher,
+    db: DBSession,
+):
+    """
+    Bosqichli kurs generatsiyasi:
+      1. Modullar (tool_use bilan kafolatlangan JSON)
+      2. Har modul uchun mavzular (alohida tool_use chaqiruvi)
+    SSE eventlar structured JSON — raw text emas.
+    """
+    async def event_generator():
+        try:
+            async for event_json in ai_service.generate_course_structured(
+                subject=ai_service.sanitize_input(body.subject),
+                grade_level=body.grade_level,
+                goal=ai_service.sanitize_input(body.goal),
+                module_count=max(1, min(body.module_count, 8)),
+                context_text=ai_service.sanitize_input(body.context_text, 5000),
+            ):
+                yield f"data: {event_json}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 # ─── POST /ai/generate-topic ──────────────────────────────────────────────────
 
 @router.post("/generate-topic", summary="AI bilan mavzu kontenti yaratish (Teacher)")
