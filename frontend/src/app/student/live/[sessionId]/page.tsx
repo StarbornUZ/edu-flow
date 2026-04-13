@@ -101,6 +101,8 @@ export default function StudentLivePage() {
   const [myResults, setMyResults] = useState<MyResult | null>(null);
   const [fullResults, setFullResults] = useState<FullResults | null>(null);
   const [showHistory, setShowHistory] = useState(false);
+  // Live group member scores (during session)
+  const [groupMembers, setGroupMembers] = useState<{ student_id: string; student_name: string; personal_score: number }[]>([]);
   // Lucky card state
   const [cardGrid, setCardGrid] = useState<CardSlot[]>([]);
   const [currentTurnTeamId, setCurrentTurnTeamId] = useState<string | null>(null);
@@ -155,6 +157,17 @@ export default function StudentLivePage() {
         case "team_assigned":
           if (msg.team_id && msg.team_name) {
             setMyTeam({ id: msg.team_id, name: msg.team_name, color: msg.team_color || "#3B82F6" });
+            // Load group members for live score panel
+            api.get<FullResults>(`/live-sessions/${sessionId}/results`)
+              .then((r) => {
+                const members = r.data.participants.filter((p) => p.team_id === msg.team_id);
+                setGroupMembers(members.map((m) => ({
+                  student_id: m.student_id,
+                  student_name: m.student_name,
+                  personal_score: m.personal_score,
+                })));
+              })
+              .catch(() => {});
           }
           break;
         case "session_started":
@@ -218,6 +231,16 @@ export default function StudentLivePage() {
           setLastResult({ is_correct: msg.is_correct ?? false, score: msg.score ?? 0 });
           if (msg.user_id === currentUser?.id && msg.score && msg.score > 0) {
             setMyScore((prev) => prev + msg.score!);
+          }
+          // Update live group member score
+          if (msg.user_id && msg.score && msg.score > 0) {
+            setGroupMembers((prev) =>
+              prev.map((m) =>
+                m.student_id === msg.user_id
+                  ? { ...m, personal_score: m.personal_score + msg.score! }
+                  : m
+              )
+            );
           }
           setState("answered");
           // Lucky card: revert to grid after delay
@@ -586,7 +609,45 @@ export default function StudentLivePage() {
     );
   }
 
+  // ── GROUP SCORE PANEL ──────────────────────────────────────────────────────
+  const GroupPanel = () => {
+    if (!myTeam || groupMembers.length === 0) return null;
+    const teamTotal = teams.find((t) => t.id === myTeam.id)?.score ?? 0;
+    const sortedMembers = [...groupMembers].sort((a, b) => b.personal_score - a.personal_score);
+    return (
+      <div
+        className="rounded-xl border-2 p-3 bg-white shadow-sm shrink-0"
+        style={{ borderColor: myTeam.color }}
+      >
+        {/* Group header */}
+        <div className="flex items-center gap-2 mb-3 pb-2 border-b border-gray-100">
+          <div className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: myTeam.color }} />
+          <span className="font-bold text-sm text-gray-800 flex-1 truncate">{myTeam.name}</span>
+          <span className="font-bold text-sm" style={{ color: myTeam.color }}>{teamTotal}</span>
+        </div>
+        {/* Members */}
+        <div className="space-y-1.5">
+          {sortedMembers.map((m) => {
+            const isMe = m.student_id === currentUser?.id;
+            return (
+              <div key={m.student_id} className={`flex items-center justify-between text-xs rounded px-1.5 py-1 ${isMe ? "bg-blue-50 font-semibold" : ""}`}>
+                <span className={`truncate flex-1 ${isMe ? "text-blue-800" : "text-gray-700"}`}>
+                  {isMe ? "⭐ " : ""}{m.student_name}
+                </span>
+                <span className={`ml-2 font-mono ${isMe ? "text-blue-700" : "text-gray-500"}`}>
+                  {m.personal_score}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
   // ── QUESTION / ANSWERED ────────────────────────────────────────────────────
+  const hasGroupPanel = myTeam && groupMembers.length > 0;
+
   return (
     <div className="min-h-screen bg-white p-4 flex flex-col">
       {/* Header */}
@@ -615,70 +676,80 @@ export default function StudentLivePage() {
         </div>
       </div>
 
-      {/* Question */}
-      {question && (
-        <div className="flex-1 flex flex-col">
-          <Card className="bg-white border-gray-200 shadow-sm mb-6">
-            <CardContent className="pt-6 pb-4">
-              <p className="text-lg font-semibold text-gray-900 leading-relaxed">{question.question_text}</p>
-            </CardContent>
-          </Card>
-
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {question.options.map((opt, idx) => {
-              const isSelected = selectedAnswer === idx;
-              const disabled = selectedAnswer !== null;
-              return (
-                <motion.div key={idx} whileTap={disabled ? {} : { scale: 0.97 }}>
-                  <Button
-                    variant="outline"
-                    disabled={disabled}
-                    onClick={() => submitAnswer(idx)}
-                    className={`w-full h-auto py-4 px-4 text-left justify-start border-2 transition-colors ${
-                      isSelected
-                        ? "border-blue-500 bg-blue-50 text-blue-900"
-                        : "border-gray-200 bg-white text-gray-800 hover:border-blue-400 hover:bg-blue-50"
-                    }`}
-                  >
-                    <span className="font-bold mr-3 text-lg">{String.fromCharCode(65 + idx)}</span>
-                    {opt}
-                  </Button>
-                </motion.div>
-              );
-            })}
+      {/* Main layout: group panel left + question right on md+ */}
+      <div className={`flex-1 flex gap-4 ${hasGroupPanel ? "md:flex-row flex-col" : "flex-col"}`}>
+        {/* Left: Group score panel */}
+        {hasGroupPanel && (
+          <div className="md:w-48 md:shrink-0">
+            <GroupPanel />
           </div>
+        )}
 
-          <AnimatePresence>
-            {state === "answered" && lastResult && (
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                className={`mt-6 p-4 rounded-xl border flex items-center gap-3 ${
-                  lastResult.is_correct ? "bg-green-50 border-green-300" : "bg-red-50 border-red-300"
-                }`}
-              >
-                {lastResult.is_correct ? (
-                  <CheckCircle className="h-6 w-6 text-green-500 shrink-0" />
-                ) : (
-                  <XCircle className="h-6 w-6 text-red-500 shrink-0" />
-                )}
-                <div>
-                  <p className={`font-semibold ${lastResult.is_correct ? "text-green-800" : "text-red-800"}`}>
-                    {lastResult.is_correct ? "To\u02bfg\u02bfri javob!" : "Noto\u02bfg\u02bfri javob"}
-                  </p>
-                  {lastResult.is_correct && lastResult.score > 0 && (
-                    <p className="text-sm text-green-600">+{lastResult.score} ball</p>
+        {/* Right: Question */}
+        {question && (
+          <div className="flex-1 flex flex-col">
+            <Card className="bg-white border-gray-200 shadow-sm mb-6">
+              <CardContent className="pt-6 pb-4">
+                <p className="text-lg font-semibold text-gray-900 leading-relaxed">{question.question_text}</p>
+              </CardContent>
+            </Card>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {question.options.map((opt, idx) => {
+                const isSelected = selectedAnswer === idx;
+                const disabled = selectedAnswer !== null;
+                return (
+                  <motion.div key={idx} whileTap={disabled ? {} : { scale: 0.97 }}>
+                    <Button
+                      variant="outline"
+                      disabled={disabled}
+                      onClick={() => submitAnswer(idx)}
+                      className={`w-full h-auto py-4 px-4 text-left justify-start border-2 transition-colors ${
+                        isSelected
+                          ? "border-blue-500 bg-blue-50 text-blue-900"
+                          : "border-gray-200 bg-white text-gray-800 hover:border-blue-400 hover:bg-blue-50"
+                      }`}
+                    >
+                      <span className="font-bold mr-3 text-lg">{String.fromCharCode(65 + idx)}</span>
+                      {opt}
+                    </Button>
+                  </motion.div>
+                );
+              })}
+            </div>
+
+            <AnimatePresence>
+              {state === "answered" && lastResult && (
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className={`mt-6 p-4 rounded-xl border flex items-center gap-3 ${
+                    lastResult.is_correct ? "bg-green-50 border-green-300" : "bg-red-50 border-red-300"
+                  }`}
+                >
+                  {lastResult.is_correct ? (
+                    <CheckCircle className="h-6 w-6 text-green-500 shrink-0" />
+                  ) : (
+                    <XCircle className="h-6 w-6 text-red-500 shrink-0" />
                   )}
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
+                  <div>
+                    <p className={`font-semibold ${lastResult.is_correct ? "text-green-800" : "text-red-800"}`}>
+                      {lastResult.is_correct ? "To\u02bfg\u02bfri javob!" : "Noto\u02bfg\u02bfri javob"}
+                    </p>
+                    {lastResult.is_correct && lastResult.score > 0 && (
+                      <p className="text-sm text-green-600">+{lastResult.score} ball</p>
+                    )}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
 
-          {state === "answered" && gameType !== "lucky_card" && (
-            <p className="text-center text-gray-400 text-sm mt-4">Keyingi savol kutilmoqda...</p>
-          )}
-        </div>
-      )}
+            {state === "answered" && gameType !== "lucky_card" && (
+              <p className="text-center text-gray-400 text-sm mt-4">Keyingi savol kutilmoqda...</p>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

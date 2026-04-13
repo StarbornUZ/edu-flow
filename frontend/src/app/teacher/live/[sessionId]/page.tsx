@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useParams } from "next/navigation";
-import { Play, SkipForward, Square, Users, Trophy, Star, Copy, Check, ChevronRight } from "lucide-react";
+import { Play, SkipForward, Square, Users, Trophy, Star, Copy, Check, ChevronRight, Shuffle, Loader2 } from "lucide-react";
 import { motion } from "framer-motion";
 import { api, getWsUrl } from "@/lib/api";
 import type { LiveSession, LiveSessionTeam } from "@/types";
@@ -62,6 +62,7 @@ export default function LiveSessionControlPage() {
   const [currentQuestion, setCurrentQuestion] = useState<WSMessage["question"] | null>(null);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [copied, setCopied] = useState(false);
+  const [assigningTeams, setAssigningTeams] = useState(false);
   // Blitz auto-advance
   const [blitzTimeLeft, setBlitzTimeLeft] = useState(0);
   const blitzTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -232,6 +233,18 @@ export default function LiveSessionControlPage() {
     }
   };
 
+  const handleAssignTeams = async () => {
+    setAssigningTeams(true);
+    try {
+      const res = await api.post<{ teams: LiveSessionTeam[] }>(`/live-sessions/${sessionId}/assign-teams`);
+      if (Array.isArray(res.data.teams)) setTeams(res.data.teams);
+    } catch {
+      //
+    } finally {
+      setAssigningTeams(false);
+    }
+  };
+
   const studentJoinUrl = typeof window !== "undefined"
     ? `${window.location.origin}/student/live/${sessionId}`
     : `/student/live/${sessionId}`;
@@ -288,8 +301,20 @@ export default function LiveSessionControlPage() {
 
         {/* Controls */}
         <div className="flex gap-2">
+          {session.status === "pending" && session.session_type === "group_battle" && teams.length === 0 && (
+            <Button onClick={handleAssignTeams} disabled={assigningTeams} variant="outline">
+              {assigningTeams
+                ? <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                : <Shuffle className="h-4 w-4 mr-2" />}
+              Guruhlarni tuzish
+            </Button>
+          )}
           {session.status === "pending" && (
-            <Button onClick={handleStart} className="bg-green-600 hover:bg-green-700">
+            <Button
+              onClick={handleStart}
+              className="bg-green-600 hover:bg-green-700"
+              disabled={session.session_type === "group_battle" && teams.length === 0}
+            >
               <Play className="h-4 w-4 mr-2" />
               Musobaqani boshlash
             </Button>
