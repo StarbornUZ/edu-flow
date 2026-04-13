@@ -2,8 +2,10 @@
 import uuid
 
 from fastapi import APIRouter, HTTPException, status
+from sqlalchemy import select
 
 from backend.api.deps import CurrentTeacher, CurrentUser, DBSession
+from backend.db.models.topic import Topic
 from backend.db.models.user import UserRole
 from backend.repositories.course_repo import CourseRepository
 from backend.schemas.class_ import ClassResponse
@@ -15,6 +17,7 @@ from backend.schemas.course import (
     ModuleResponse,
     ModuleUpdate,
 )
+from backend.schemas.topic import TopicResponse
 
 router = APIRouter()
 
@@ -379,3 +382,35 @@ async def remove_class_from_course(
     removed = await repo.remove_class_from_course(course_id, class_id)
     if not removed:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Sinf bu kursga biriktirilmagan")
+
+
+# ---------------------------------------------------------------------------
+# GET /courses/{course_id}/topics/{topic_id}  — mavzuni to'g'ridan-to'g'ri olish
+# ---------------------------------------------------------------------------
+
+@router.get(
+    "/{course_id}/topics/{topic_id}",
+    response_model=TopicResponse,
+    summary="Kurs mavzusini to'g'ridan-to'g'ri olish",
+)
+async def get_course_topic(
+    course_id: uuid.UUID,
+    topic_id: uuid.UUID,
+    user: CurrentUser,
+    db: DBSession,
+):
+    repo = _repo(db)
+    course = await _get_course_or_404(repo, course_id)
+    await _check_course_access(repo, course, user)
+
+    result = await db.execute(select(Topic).where(Topic.id == topic_id))
+    topic = result.scalar_one_or_none()
+    if not topic:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Mavzu topilmadi")
+
+    # Topic shu kursga tegishli ekanligini tekshirish
+    module = await repo.get_module(topic.module_id)
+    if not module or module.course_id != course_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Mavzu bu kursga tegishli emas")
+
+    return TopicResponse.model_validate(topic)

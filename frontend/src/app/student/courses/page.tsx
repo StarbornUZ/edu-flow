@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { BookOpen, Plus } from "lucide-react";
 import { motion } from "framer-motion";
@@ -169,11 +170,16 @@ export default function StudentCoursesPage() {
               <Link href={`/student/courses/${course.id}`}>
                 <Card className="hover:shadow-md transition-shadow cursor-pointer h-full">
                   {course.cover_url && (
-                    <img
-                      src={course.cover_url}
-                      alt={course.title}
-                      className="w-full h-40 object-cover rounded-t-lg"
-                    />
+                    <div className="relative w-full h-40">
+                      <Image
+                        src={course.cover_url}
+                        alt={course.title}
+                        fill
+                        className="object-cover rounded-t-lg"
+                        sizes="(max-width: 768px) 100vw, 33vw"
+                        loading="lazy"
+                      />
+                    </div>
                   )}
                   <CardHeader className="pb-2">
                     <div className="flex items-center gap-2 mb-1">
