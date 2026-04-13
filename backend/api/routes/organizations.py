@@ -22,7 +22,14 @@ from backend.schemas.organization import (
     OrganizationCreate,
     OrganizationResponse,
     OrganizationUpdate,
+    OrganizationWithCountsResponse,
 )
+from backend.schemas.parent import ParentAssignRequest, ParentResponse
+from backend.repositories.parent_repo import ParentRepository
+from backend.db.models.user import UserRole
+from backend.schemas.invitation import OrgInvitationCreate, OrgInvitationResponse
+from backend.repositories.invitation_repo import InvitationRepository
+from backend.db.models.org_invitation import InvitationStatus
 
 router = APIRouter()
 
@@ -79,12 +86,18 @@ async def _unique_username(user_repo: UserRepository, full_name: str) -> str:
 
 @router.get(
     "/",
-    response_model=list[OrganizationResponse],
+    response_model=list[OrganizationWithCountsResponse],
     summary="Barcha tashkilotlar (faqat admin)",
 )
 async def list_organizations(admin: CurrentAdmin, db: DBSession):
-    orgs = await _repo(db).get_all()
-    return [OrganizationResponse.model_validate(o) for o in orgs]
+    rows = await _repo(db).get_all_with_counts()
+    result = []
+    for org, teachers_count, students_count in rows:
+        item = OrganizationWithCountsResponse.model_validate(org)
+        item.teachers_count = teachers_count
+        item.students_count = students_count
+        result.append(item)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +137,24 @@ async def create_organization(
 async def submit_org_request(
     data: OrgRequestCreate, user: CurrentUser, db: DBSession
 ):
-    req = await _repo(db).create_request(user.id, data.org_data)
+    from datetime import datetime, timezone
+    repo = _repo(db)
+    latest = await repo.get_user_latest_request(user.id)
+    if latest:
+        if str(latest.status) == "pending":
+            raise HTTPException(status.HTTP_409_CONFLICT, "Ko'rib chiqilayotgan so'rovingiz mavjud")
+        if str(latest.status) == "approved":
+            raise HTTPException(status.HTTP_409_CONFLICT, "So'rovingiz allaqachon tasdiqlangan")
+        if str(latest.status) == "rejected":
+            elapsed = (datetime.now(timezone.utc) - latest.updated_at.replace(tzinfo=timezone.utc)).total_seconds()
+            if elapsed < 86400:
+                remaining_h = int((86400 - elapsed) / 3600)
+                remaining_m = int(((86400 - elapsed) % 3600) / 60)
+                raise HTTPException(
+                    status.HTTP_429_TOO_MANY_REQUESTS,
+                    f"Qaytadan yuborish uchun {remaining_h} soat {remaining_m} daqiqa kuting",
+                )
+    req = await repo.create_request(user.id, data.org_data)
     return OrgRequestResponse.model_validate(req)
 
 
@@ -590,3 +620,247 @@ async def get_member_profile(
         }
 
     return profile
+
+
+# ---------------------------------------------------------------------------
+# GET /organizations/{org_id}/students/{student_id}/parents
+# ---------------------------------------------------------------------------
+
+@router.get(
+    "/{org_id}/students/{student_id}/parents",
+    response_model=list[ParentResponse],
+    summary="O'quvchining ota-onalari (org_admin)",
+)
+async def list_student_parents(
+    org_id: uuid.UUID,
+    student_id: uuid.UUID,
+    admin: CurrentOrgAdmin,
+    db: DBSession,
+):
+    await verify_org_access(org_id, admin, db, require_admin=True)
+    rows = await ParentRepository(db).get_student_parents(student_id)
+    result = []
+    for link, parent_user in rows:
+        result.append(ParentResponse(
+            id=parent_user.id,
+            full_name=parent_user.full_name,
+            email=parent_user.email,
+            username=parent_user.username,
+            phone=parent_user.phone,
+            is_confirmed=link.is_confirmed,
+        ))
+    return result
+
+
+# ---------------------------------------------------------------------------
+# POST /organizations/{org_id}/students/{student_id}/parents
+# ---------------------------------------------------------------------------
+
+@router.post(
+    "/{org_id}/students/{student_id}/parents",
+    response_model=ParentResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="O'quvchiga ota-ona biriktirish (org_admin) — mavjudini biriktiradi yoki yangi yaratadi",
+)
+async def assign_parent_to_student(
+    org_id: uuid.UUID,
+    student_id: uuid.UUID,
+    data: ParentAssignRequest,
+    admin: CurrentOrgAdmin,
+    db: DBSession,
+):
+    await verify_org_access(org_id, admin, db, require_admin=True)
+
+    user_repo = UserRepository(db)
+    parent_repo = ParentRepository(db)
+
+    # Student mavjudligini tekshirish
+    student = await user_repo.get_by_id(student_id)
+    if not student or student.org_id != org_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "O'quvchi topilmadi")
+
+    generated_password: str | None = None
+
+    # Email bo'yicha mavjud parent qidirish
+    existing_user = await user_repo.get_by_email(data.email)
+
+    if existing_user:
+        if existing_user.role != UserRole.parent:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Bu email bilan ro'yxatdan o'tgan foydalanuvchi ota-ona emas"
+            )
+        parent_user = existing_user
+    else:
+        # Yangi ota-ona yaratish
+        if not data.full_name:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Yangi ota-ona yaratish uchun full_name talab qilinadi"
+            )
+        username = await _unique_username(user_repo, data.full_name)
+        generated_password = _generate_password()
+        parent_user = await user_repo.create(
+            email=data.email,
+            password_hash=hash_password(generated_password),
+            full_name=data.full_name,
+            role="parent",
+            org_id=org_id,
+            username=username,
+            system_password=generated_password,
+        )
+
+    # Allaqachon biriktirilganmi?
+    existing_link = await parent_repo.get_link(student_id, parent_user.id)
+    if existing_link:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Bu ota-ona allaqachon biriktirilgan")
+
+    await parent_repo.assign_parent(
+        org_id=org_id,
+        student_id=student_id,
+        parent_id=parent_user.id,
+        confirmed_by=admin.id,
+    )
+
+    return ParentResponse(
+        id=parent_user.id,
+        full_name=parent_user.full_name,
+        email=parent_user.email,
+        username=parent_user.username,
+        phone=parent_user.phone,
+        is_confirmed=True,
+        generated_password=generated_password,
+    )
+
+
+# ---------------------------------------------------------------------------
+# DELETE /organizations/{org_id}/students/{student_id}/parents/{parent_id}
+# ---------------------------------------------------------------------------
+
+@router.delete(
+    "/{org_id}/students/{student_id}/parents/{parent_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="O'quvchidan ota-onani olib tashlash (org_admin)",
+)
+async def remove_parent_from_student(
+    org_id: uuid.UUID,
+    student_id: uuid.UUID,
+    parent_id: uuid.UUID,
+    admin: CurrentOrgAdmin,
+    db: DBSession,
+):
+    await verify_org_access(org_id, admin, db, require_admin=True)
+    removed = await ParentRepository(db).remove_parent(student_id, parent_id)
+    if not removed:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Bog'lanish topilmadi")
+
+
+# ---------------------------------------------------------------------------
+# POST /organizations/{org_id}/invitations — taklif yuborish
+# ---------------------------------------------------------------------------
+
+def _build_invitation_response(inv, org, user) -> OrgInvitationResponse:
+    return OrgInvitationResponse(
+        id=inv.id,
+        org_id=inv.org_id,
+        org_name=org.name,
+        invited_user_id=inv.invited_user_id,
+        invited_user_name=user.full_name,
+        invited_user_email=user.email,
+        invited_by=inv.invited_by,
+        role_in_org=inv.role_in_org,
+        status=str(inv.status),
+        message=inv.message,
+        created_at=inv.created_at,
+    )
+
+
+@router.post(
+    "/{org_id}/invitations",
+    response_model=OrgInvitationResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Foydalanuvchiga tashkilotga qo'shilish taklifini yuborish (org_admin)",
+)
+async def send_invitation(
+    org_id: uuid.UUID,
+    data: OrgInvitationCreate,
+    admin: CurrentOrgAdmin,
+    db: DBSession,
+):
+    await verify_org_access(org_id, admin, db, require_admin=True)
+
+    user_repo = UserRepository(db)
+    inv_repo = InvitationRepository(db)
+    org_repo = _repo(db)
+
+    org = await _get_org_or_404(org_repo, org_id)
+
+    # Foydalanuvchi mavjudligini tekshirish
+    target = await user_repo.get_by_id(data.user_id)
+    if not target:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
+
+    # Allaqachon a'zomi?
+    existing_member = await org_repo.get_member(org_id, data.user_id)
+    if existing_member:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Foydalanuvchi allaqachon tashkilot a'zosi")
+
+    # Kutilayotgan taklif bormi?
+    pending = await inv_repo.get_pending_for_user_in_org(data.user_id, org_id)
+    if pending:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Bu foydalanuvchiga allaqachon taklif yuborilgan")
+
+    inv = await inv_repo.create(
+        org_id=org_id,
+        invited_user_id=data.user_id,
+        invited_by=admin.id,
+        role_in_org=data.role_in_org,
+        message=data.message,
+    )
+    return _build_invitation_response(inv, org, target)
+
+
+# ---------------------------------------------------------------------------
+# GET /organizations/{org_id}/invitations — org takliflari ro'yxati
+# ---------------------------------------------------------------------------
+
+@router.get(
+    "/{org_id}/invitations",
+    response_model=list[OrgInvitationResponse],
+    summary="Tashkilot tomonidan yuborilgan takliflar (org_admin)",
+)
+async def list_org_invitations(
+    org_id: uuid.UUID,
+    admin: CurrentOrgAdmin,
+    db: DBSession,
+    inv_status: str | None = Query(None, alias="status"),
+):
+    await verify_org_access(org_id, admin, db, require_admin=True)
+    org = await _get_org_or_404(_repo(db), org_id)
+    rows = await InvitationRepository(db).get_org_invitations(org_id, status=inv_status)
+    return [_build_invitation_response(inv, org, user) for inv, user in rows]
+
+
+# ---------------------------------------------------------------------------
+# DELETE /organizations/{org_id}/invitations/{inv_id} — taklifni bekor qilish
+# ---------------------------------------------------------------------------
+
+@router.delete(
+    "/{org_id}/invitations/{inv_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Taklifni bekor qilish (org_admin)",
+)
+async def revoke_invitation(
+    org_id: uuid.UUID,
+    inv_id: uuid.UUID,
+    admin: CurrentOrgAdmin,
+    db: DBSession,
+):
+    await verify_org_access(org_id, admin, db, require_admin=True)
+    inv_repo = InvitationRepository(db)
+    inv = await inv_repo.get_by_id(inv_id)
+    if not inv or inv.org_id != org_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Taklif topilmadi")
+    if str(inv.status) != "pending":
+        raise HTTPException(status.HTTP_409_CONFLICT, "Faqat kutilayotgan taklifni bekor qilish mumkin")
+    await inv_repo.update_status(inv, InvitationStatus.revoked)

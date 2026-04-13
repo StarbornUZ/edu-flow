@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Users, Search, UserPlus, Eye, EyeOff, RefreshCw, Copy } from "lucide-react";
+import { Plus, Users, Search, UserPlus, Eye, EyeOff, RefreshCw, Copy, X, Clock } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
@@ -29,6 +29,15 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+
+interface OrgInvitation {
+  id: string;
+  invited_user_name: string;
+  invited_user_email: string;
+  role_in_org: string;
+  status: string;
+  created_at: string;
+}
 
 function PasswordCell({ userId, orgId }: { userId: string; orgId: string }) {
   const [show, setShow] = useState(false);
@@ -139,15 +148,34 @@ export default function TeachersPage() {
     enabled: !!orgId,
   });
 
+  const { data: pendingInvitations } = useQuery<OrgInvitation[]>({
+    queryKey: ["org-invitations-teachers", orgId],
+    queryFn: () =>
+      api.get<OrgInvitation[]>(`/organizations/${orgId}/invitations?status=pending`).then((r) =>
+        r.data.filter((inv) => inv.role_in_org === "teacher")
+      ),
+    enabled: !!orgId,
+  });
+
   const addExisting = useMutation({
     mutationFn: (userId: string) =>
-      api.post(`/organizations/${orgId}/members`, { user_id: userId, role_in_org: "teacher" }),
+      api.post(`/organizations/${orgId}/invitations`, { user_id: userId, role_in_org: "teacher" }),
     onSuccess: () => {
-      toast.success("O'qituvchi muvaffaqiyatli qo'shildi");
-      queryClient.invalidateQueries({ queryKey: ["org-teachers", orgId] });
+      toast.success("Ta'klif yuborildi");
+      queryClient.invalidateQueries({ queryKey: ["org-invitations-teachers", orgId] });
       closeDialog();
     },
     onError: () => toast.error("Xatolik yuz berdi"),
+  });
+
+  const revokeInvitation = useMutation({
+    mutationFn: (invId: string) =>
+      api.delete(`/organizations/${orgId}/invitations/${invId}`),
+    onSuccess: () => {
+      toast.success("Taklif bekor qilindi");
+      queryClient.invalidateQueries({ queryKey: ["org-invitations-teachers", orgId] });
+    },
+    onError: () => toast.error("Bekor qilishda xatolik"),
   });
 
   const createAndAdd = useMutation({
@@ -261,7 +289,7 @@ export default function TeachersPage() {
                       <p className="font-medium">{searchResult.full_name}</p>
                       <p className="text-sm text-muted-foreground">{searchResult.email}</p>
                       <Button className="w-full" onClick={() => addExisting.mutate((searchResult as User).id)} disabled={addExisting.isPending}>
-                        {addExisting.isPending ? "Qo'shilmoqda..." : "Tashkilotga qo'shish"}
+                        {addExisting.isPending ? "Yuborilmoqda..." : "Ta'klif yuborish"}
                       </Button>
                     </div>
                   )}
@@ -312,6 +340,49 @@ export default function TeachersPage() {
           <Users className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
           <h3 className="text-lg font-medium mb-2">Hali o&apos;qituvchilar yo&apos;q</h3>
           <p className="text-muted-foreground">Yuqoridagi tugma orqali o&apos;qituvchi qo&apos;shing</p>
+        </div>
+      )}
+
+      {/* Pending invitations */}
+      {pendingInvitations && pendingInvitations.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <Clock className="h-4 w-4 text-muted-foreground" />
+            <h2 className="text-base font-semibold">Kutilayotgan takliflar</h2>
+            <Badge variant="secondary">{pendingInvitations.length}</Badge>
+          </div>
+          <div className="rounded-lg border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>To&apos;liq ism</TableHead>
+                  <TableHead>Email</TableHead>
+                  <TableHead>Yuborilgan sana</TableHead>
+                  <TableHead className="w-10" />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {pendingInvitations.map((inv) => (
+                  <TableRow key={inv.id}>
+                    <TableCell className="font-medium">{inv.invited_user_name}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{inv.invited_user_email}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{formatDate(inv.created_at)}</TableCell>
+                    <TableCell>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-destructive hover:text-destructive"
+                        onClick={() => revokeInvitation.mutate(inv.id)}
+                        disabled={revokeInvitation.isPending}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
         </div>
       )}
     </div>

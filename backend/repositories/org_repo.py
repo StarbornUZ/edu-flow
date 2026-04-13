@@ -53,6 +53,26 @@ class OrgRepository:
         result = await self.db.execute(select(Organization))
         return list(result.scalars().all())
 
+    async def get_all_with_counts(self) -> list[tuple]:
+        """Barcha tashkilotlar + o'qituvchilar va o'quvchilar soni."""
+        from sqlalchemy import func, case
+        stmt = (
+            select(
+                Organization,
+                func.count(
+                    case((OrganizationMember.role_in_org == OrgMemberRole.teacher, OrganizationMember.id))
+                ).label("teachers_count"),
+                func.count(
+                    case((OrganizationMember.role_in_org == OrgMemberRole.student, OrganizationMember.id))
+                ).label("students_count"),
+            )
+            .outerjoin(OrganizationMember, OrganizationMember.org_id == Organization.id)
+            .group_by(Organization.id)
+            .order_by(Organization.created_at.desc())
+        )
+        result = await self.db.execute(stmt)
+        return list(result.all())
+
     async def update(self, org: Organization, **kwargs) -> Organization:
         for key, value in kwargs.items():
             setattr(org, key, value)

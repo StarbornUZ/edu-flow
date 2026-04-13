@@ -13,6 +13,7 @@ from backend.schemas.class_ import (
     ClassCreate,
     ClassEnrollmentResponse,
     ClassResponse,
+    ClassStudentResponse,
     ClassUpdate,
     EnrollCourseRequest,
     JoinClassRequest,
@@ -44,11 +45,16 @@ def _check_owner(cls, teacher):
 async def _check_class_access(repo: ClassRepository, cls, user) -> None:
     """Sinfga kirish huquqini tekshiradi.
 
-    Admin   → har qanday sinf
-    Teacher → faqat o'z sinflari
-    Student → faqat a'zo bo'lgan sinflari
+    Admin     → har qanday sinf
+    Org_admin → faqat o'z tashkiloti sinflari
+    Teacher   → faqat o'z sinflari
+    Student   → faqat a'zo bo'lgan sinflari
     """
     if user.role == UserRole.admin:
+        return
+    if user.role == UserRole.org_admin:
+        if cls.org_id != user.org_id:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu sinf sizning tashkilotingizga tegishli emas")
         return
     if user.role == UserRole.teacher:
         if cls.teacher_id != user.id:
@@ -181,8 +187,8 @@ async def update_class(
 
 @router.get(
     "/{class_id}/students",
-    response_model=list[ClassEnrollmentResponse],
-    summary="Sinfdagi o'quvchilar (teacher: to'liq, student: o'z sinfdoshlari)",
+    response_model=list[ClassStudentResponse],
+    summary="Sinfdagi o'quvchilar ma'lumotlari bilan (org_admin, teacher, student)",
 )
 async def list_students(
     class_id: uuid.UUID,
@@ -191,10 +197,23 @@ async def list_students(
 ):
     repo = _repo(db)
     cls = await _get_class_or_404(repo, class_id)
-    await _check_class_access(repo, cls, user)   # teacher-egasi yoki a'zo student
+    await _check_class_access(repo, cls, user)
 
-    enrollments = await repo.get_students(class_id)
-    return [ClassEnrollmentResponse.model_validate(e) for e in enrollments]
+    rows = await repo.get_students_with_details(class_id)
+    return [
+        ClassStudentResponse(
+            enrollment_id=enrollment.id,
+            student_id=student.id,
+            full_name=student.full_name,
+            email=student.email,
+            username=student.username,
+            phone=student.phone,
+            avatar_url=student.avatar_url,
+            status=str(enrollment.status),
+            enrolled_at=enrollment.created_at,
+        )
+        for enrollment, student in rows
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -311,17 +330,25 @@ async def refresh_class_code(
 @router.delete(
     "/{class_id}/students/{student_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    summary="O'quvchini sinfdan chiqarish",
+    summary="O'quvchini sinfdan chiqarish (teacher-egasi yoki org_admin)",
 )
 async def remove_student(
     class_id: uuid.UUID,
     student_id: uuid.UUID,
-    teacher: CurrentTeacher,
+    user: CurrentUser,
     db: DBSession,
 ):
     repo = _repo(db)
     cls = await _get_class_or_404(repo, class_id)
-    _check_owner(cls, teacher)
+
+    if user.role == UserRole.org_admin:
+        if cls.org_id != user.org_id:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu sinf sizning tashkilotingizga tegishli emas")
+    elif user.role in (UserRole.teacher, UserRole.admin):
+        if user.role == UserRole.teacher:
+            _check_owner(cls, user)
+    else:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Ruxsat yo'q")
 
     removed = await repo.remove_student(class_id, student_id)
     if not removed:

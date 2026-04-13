@@ -4,7 +4,7 @@ import uuid
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
-from backend.api.deps import CurrentAdmin, CurrentUser, DBSession
+from backend.api.deps import CurrentUser, DBSession
 from backend.db.models.subject import Subject
 from backend.db.models.user import UserRole
 from backend.schemas.subject import SubjectCreate, SubjectResponse, SubjectUpdate
@@ -103,10 +103,12 @@ async def update_subject(
     user: CurrentUser,
     db: DBSession,
 ):
-    if user.role not in (UserRole.admin, UserRole.org_admin):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Faqat admin yoki org_admin")
-
     subject = await _get_subject_or_404(db, subject_id)
+    if user.role == UserRole.org_admin:
+        if subject.org_id != user.org_id:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu fan sizning tashkilotingizga tegishli emas")
+    elif user.role != UserRole.admin:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Faqat admin yoki org_admin")
     updates = data.model_dump(exclude_none=True)
     for key, value in updates.items():
         setattr(subject, key, value)
@@ -124,7 +126,12 @@ async def update_subject(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Fanni o'chirish (admin)",
 )
-async def delete_subject(subject_id: uuid.UUID, admin: CurrentAdmin, db: DBSession):
+async def delete_subject(subject_id: uuid.UUID, user: CurrentUser, db: DBSession):
     subject = await _get_subject_or_404(db, subject_id)
+    if user.role == UserRole.org_admin:
+        if subject.org_id != user.org_id:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu fan sizning tashkilotingizga tegishli emas")
+    elif user.role != UserRole.admin:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Faqat admin yoki org_admin")
     await db.delete(subject)
     await db.commit()

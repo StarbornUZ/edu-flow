@@ -1,6 +1,6 @@
 "use client";
 
-import { LayoutDashboard, FileText } from "lucide-react";
+import { LayoutDashboard, FileText, Building2 } from "lucide-react";
 import RoleGuard from "@/components/shared/RoleGuard";
 import Navbar from "@/components/shared/Navbar";
 import Sidebar from "@/components/shared/Sidebar";
@@ -15,6 +15,11 @@ const sidebarItems = [
     label: "So'rovlar",
     href: "/admin/requests",
     icon: <FileText className="h-4 w-4" />,
+  },
+  {
+    label: "Tashkilotlar",
+    href: "/admin/organizations",
+    icon: <Building2 className="h-4 w-4" />,
   },
 ];
 

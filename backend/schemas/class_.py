@@ -70,3 +70,15 @@ class ClassEnrollmentResponse(BaseModel):
     student_id: uuid.UUID
     status: str
     created_at: datetime
+
+
+class ClassStudentResponse(BaseModel):
+    enrollment_id: uuid.UUID
+    student_id: uuid.UUID
+    full_name: str
+    email: str
+    username: str | None
+    phone: str | None
+    avatar_url: str | None
+    status: str
+    enrolled_at: datetime

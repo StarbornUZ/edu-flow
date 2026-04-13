@@ -43,7 +43,7 @@ app.add_middleware(
 # Routes
 # ---------------------------------------------------------------------------
 
-from backend.api.routes import auth, courses, classes, assignments, ai, dashboard, organizations, topics, subjects, live_sessions
+from backend.api.routes import auth, courses, classes, assignments, ai, dashboard, organizations, topics, subjects, live_sessions, users
 app.include_router(auth.router,          prefix="/api/v1/auth",          tags=["Auth"])
 app.include_router(courses.router,       prefix="/api/v1/courses",       tags=["Courses"])
 app.include_router(classes.router,       prefix="/api/v1/classes",       tags=["Classes"])
@@ -54,6 +54,7 @@ app.include_router(organizations.router, prefix="/api/v1/organizations", tags=["
 app.include_router(topics.router,        prefix="/api/v1/modules",       tags=["Topics"])
 app.include_router(subjects.router,      prefix="/api/v1/subjects",      tags=["Subjects"])
 app.include_router(live_sessions.router, prefix="/api/v1")
+app.include_router(users.router,         prefix="/api/v1/users",         tags=["Users"])
 
 # ---------------------------------------------------------------------------
 # Health check
