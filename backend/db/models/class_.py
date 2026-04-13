@@ -36,24 +36,12 @@ class Class(Base, TimestampMixin):
         index=True,
     )
 
-    subject_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("subjects.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-    )
-
     grade_level: Mapped[int | None] = mapped_column(
         Integer,
         nullable=True,
     )
 
     name: Mapped[str] = mapped_column(
-        String(255),
-        nullable=False,
-    )
-
-    subject: Mapped[str] = mapped_column(
         String(255),
         nullable=False,
     )
