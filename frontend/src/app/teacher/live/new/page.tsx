@@ -62,6 +62,7 @@ export default function NewLiveSessionPage() {
   const [currentOptions, setCurrentOptions] = useState(["", "", "", ""]);
   const [correctIndex, setCorrectIndex] = useState(0);
   const [aiModalOpen, setAiModalOpen] = useState(false);
+  const [aiTopic, setAiTopic] = useState("");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -395,9 +396,17 @@ export default function NewLiveSessionPage() {
             <CardHeader>
               <div className="flex items-center justify-between">
                 <CardTitle className="text-lg">Savollar ({questions.length})</CardTitle>
-                <Button variant="outline" size="sm" onClick={() => setAiModalOpen(true)}>
+              </div>
+              <div className="flex gap-2 items-center">
+                <Input
+                  placeholder="Mavzu (masalan: Kvadrat tenglamalar)"
+                  value={aiTopic}
+                  onChange={(e) => setAiTopic(e.target.value)}
+                  className="flex-1"
+                />
+                <Button variant="outline" size="sm" onClick={() => setAiModalOpen(true)} disabled={!aiTopic}>
                   <Sparkles className="h-4 w-4 mr-2" />
-                  AI bilan yaratish
+                  AI
                 </Button>
               </div>
             </CardHeader>
@@ -499,6 +508,7 @@ export default function NewLiveSessionPage() {
         title="AI bilan savollar yaratish"
         endpoint="/ai/generate-assignment"
         requestBody={{
+          topic: aiTopic,
           course_id: courseId || null,
           question_type: "mcq",
           count: 5,
