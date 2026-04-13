@@ -1,6 +1,6 @@
 import enum
 import uuid
-from sqlalchemy import UUID, Enum, ForeignKey, JSON, String, Integer, Boolean
+from sqlalchemy import UUID, Enum, ForeignKey, JSON, String, Integer, Boolean  # noqa: F401
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from backend.db.base import Base
 from backend.db.mixin.timestamp import TimestampMixin
@@ -38,6 +38,9 @@ class LiveSession(Base, TimestampMixin):
         Enum(SessionStatus, name="session_status"),
         default=SessionStatus.pending, nullable=False
     )
+    session_type: Mapped[str] = mapped_column(String(20), nullable=False, default="group_battle")
+    # class_ids: UUIDlar ro'yxati (JSON) — bu sessiyaga tegishli sinflar
+    class_ids: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     config: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     questions: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     current_question_index: Mapped[int] = mapped_column(default=0, nullable=False)

@@ -61,6 +61,19 @@ async def create_subject(data: SubjectCreate, user: CurrentUser, db: DBSession):
     if user.role not in (UserRole.admin, UserRole.org_admin):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Faqat admin yoki org_admin")
 
+    from sqlalchemy import or_
+    dup = await db.execute(
+        select(Subject).where(
+            or_(
+                Subject.org_id == user.org_id,
+                Subject.is_default.is_(True),
+            ),
+            Subject.name == data.name,
+        )
+    )
+    if dup.scalar_one_or_none():
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Bu nomdagi fan allaqachon mavjud")
+
     subject = Subject(
         name=data.name,
         description=data.description,

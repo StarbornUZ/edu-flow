@@ -2,9 +2,9 @@
 
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useParams } from "next/navigation";
-import { Play, SkipForward, Square, Users, Trophy, Star } from "lucide-react";
+import { Play, SkipForward, Square, Users, Trophy, Star, Copy, Check } from "lucide-react";
 import { motion } from "framer-motion";
-import { api } from "@/lib/api";
+import { api, getWsUrl } from "@/lib/api";
 import type { LiveSession, LiveSessionTeam } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -18,7 +18,13 @@ import {
 
 interface WSMessage {
   type: string;
-  data?: Record<string, unknown>;
+  connected_count?: number;
+  teams?: LiveSessionTeam[];
+  winner_team?: string;
+  mvp?: { student_id: string; score: number } | null;
+  question?: { question_text: string; options: string[]; time_limit_sec: number };
+  index?: number;
+  total?: number;
 }
 
 export default function LiveSessionControlPage() {
@@ -30,52 +36,48 @@ export default function LiveSessionControlPage() {
   const [connectedCount, setConnectedCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [sessionEnded, setSessionEnded] = useState(false);
-  const [winner, setWinner] = useState<LiveSessionTeam | null>(null);
+  const [winnerTeam, setWinnerTeam] = useState<string | null>(null);
   const [mvp, setMvp] = useState<string | null>(null);
+  const [currentQuestion, setCurrentQuestion] = useState<WSMessage["question"] | null>(null);
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [copied, setCopied] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
 
   const handleWSMessage = useCallback((event: MessageEvent) => {
     try {
       const msg: WSMessage = JSON.parse(event.data);
       switch (msg.type) {
-        case "player_joined":
-          setConnectedCount((prev) => prev + 1);
-          break;
-        case "player_left":
-          setConnectedCount((prev) => Math.max(0, prev - 1));
-          break;
-        case "leaderboard_update":
-          if (msg.data && Array.isArray(msg.data.teams)) {
-            setTeams(msg.data.teams as LiveSessionTeam[]);
+        case "participant_joined":
+          if (typeof msg.connected_count === "number") {
+            setConnectedCount(msg.connected_count);
           }
           break;
-        case "connected_count":
-          if (msg.data && typeof msg.data.count === "number") {
-            setConnectedCount(msg.data.count);
+        case "participant_left":
+          if (typeof msg.connected_count === "number") {
+            setConnectedCount(msg.connected_count);
+          }
+          break;
+        case "leaderboard_update":
+          if (Array.isArray(msg.teams)) {
+            setTeams(msg.teams);
+          }
+          break;
+        case "next_question":
+          if (msg.question) {
+            setCurrentQuestion(msg.question);
+            setCurrentQuestionIndex(msg.index ?? 0);
           }
           break;
         case "session_ended":
           setSessionEnded(true);
-          if (msg.data) {
-            if (msg.data.winner) {
-              setWinner(msg.data.winner as LiveSessionTeam);
-            }
-            if (typeof msg.data.mvp === "string") {
-              setMvp(msg.data.mvp);
-            }
+          if (msg.winner_team) {
+            setWinnerTeam(msg.winner_team);
           }
-          break;
-        case "question_changed":
-          if (msg.data && typeof msg.data.current_question_index === "number") {
-            setSession((prev) =>
-              prev
-                ? {
-                    ...prev,
-                    current_question_index:
-                      msg.data!.current_question_index as number,
-                  }
-                : prev
-            );
+          if (msg.mvp?.student_id) {
+            setMvp(msg.mvp.student_id);
+          }
+          if (Array.isArray(msg.teams)) {
+            setTeams(msg.teams);
           }
           break;
         default:
@@ -95,13 +97,23 @@ export default function LiveSessionControlPage() {
         if (res.data.status === "finished") {
           setSessionEnded(true);
         }
+        // Show question that's currently active
+        if (res.data.questions && res.data.questions.length > 0) {
+          const idx = res.data.current_question_index ?? 0;
+          const q = res.data.questions[idx] as Record<string, unknown>;
+          setCurrentQuestion({
+            question_text: q.question_text as string,
+            options: q.options as string[],
+            time_limit_sec: 30,
+          });
+          setCurrentQuestionIndex(idx);
+        }
       })
       .catch(() => {})
       .finally(() => setLoading(false));
 
     // Connect WebSocket
-    const wsUrl =
-      process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000/api/v1";
+    const wsUrl = getWsUrl();
     const token = localStorage.getItem("access_token");
     const ws = new WebSocket(
       `${wsUrl}/live-sessions/ws/${sessionId}?token=${token}`
@@ -145,6 +157,17 @@ export default function LiveSessionControlPage() {
     }
   };
 
+  const studentJoinUrl = typeof window !== "undefined"
+    ? `${window.location.origin}/student/live/${sessionId}`
+    : `/student/live/${sessionId}`;
+
+  const handleCopyUrl = () => {
+    navigator.clipboard.writeText(studentJoinUrl).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-900 text-white p-6 space-y-6">
@@ -166,16 +189,13 @@ export default function LiveSessionControlPage() {
     );
   }
 
-  const currentQ =
-    session.questions && session.questions[session.current_question_index];
-
   // Sort teams by score descending
   const sortedTeams = [...teams].sort((a, b) => b.score - a.score);
 
   return (
     <div className="min-h-screen bg-gray-900 text-white p-6 -m-4 md:-m-6">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-4">
         <div>
           <h1 className="text-2xl font-bold">Jonli musobaqa</h1>
           <div className="flex items-center gap-3 mt-1">
@@ -228,6 +248,22 @@ export default function LiveSessionControlPage() {
         </div>
       </div>
 
+      {/* Student join URL */}
+      {!sessionEnded && (
+        <div className="flex items-center gap-2 mb-6 p-3 rounded-lg bg-gray-800 border border-gray-700">
+          <span className="text-xs text-gray-400 shrink-0">O&apos;quvchilar havolasi:</span>
+          <span className="text-xs text-blue-400 truncate flex-1">{studentJoinUrl}</span>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="shrink-0 h-7 px-2"
+            onClick={handleCopyUrl}
+          >
+            {copied ? <Check className="h-3 w-3 text-green-400" /> : <Copy className="h-3 w-3" />}
+          </Button>
+        </div>
+      )}
+
       {/* Session Ended */}
       {sessionEnded && (
         <motion.div
@@ -237,9 +273,9 @@ export default function LiveSessionControlPage() {
         >
           <Trophy className="h-16 w-16 text-yellow-400 mx-auto mb-4" />
           <h2 className="text-3xl font-bold mb-2">Musobaqa yakunlandi!</h2>
-          {winner && (
+          {winnerTeam && (
             <p className="text-xl text-yellow-400">
-              G&apos;olib: {winner.name} ({winner.score} ball)
+              G&apos;olib: {winnerTeam}
             </p>
           )}
           {mvp && (
@@ -252,25 +288,21 @@ export default function LiveSessionControlPage() {
       )}
 
       {/* Current Question */}
-      {currentQ && !sessionEnded && (
+      {currentQuestion && !sessionEnded && (
         <Card className="bg-gray-800 border-gray-700 mb-6">
           <CardHeader>
             <CardTitle className="text-white text-sm text-gray-400">
-              Savol {session.current_question_index + 1} /{" "}
-              {session.questions.length}
+              Savol {currentQuestionIndex + 1}{" "}
+              {session.questions && `/ ${session.questions.length}`}
             </CardTitle>
           </CardHeader>
           <CardContent>
             <p className="text-lg font-medium text-white">
-              {(currentQ as Record<string, unknown>).question_text as string}
+              {currentQuestion.question_text}
             </p>
-            {Array.isArray(
-              (currentQ as Record<string, unknown>).options
-            ) && (
+            {Array.isArray(currentQuestion.options) && (
               <div className="grid grid-cols-2 gap-2 mt-4">
-                {(
-                  (currentQ as Record<string, unknown>).options as string[]
-                ).map((opt, idx) => (
+                {currentQuestion.options.map((opt, idx) => (
                   <div
                     key={idx}
                     className="p-3 rounded-lg bg-gray-700 text-gray-200"

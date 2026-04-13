@@ -102,6 +102,15 @@ async def create_class(data: ClassCreate, user: CurrentTeacher, db: DBSession):
         user.id if user.role == UserRole.teacher else None
     )
     org_id = data.org_id or user.org_id
+
+    from sqlalchemy import select
+    from backend.db.models.class_ import Class
+    dup = await db.execute(
+        select(Class).where(Class.org_id == org_id, Class.name == data.name)
+    )
+    if dup.scalar_one_or_none():
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Bu nomdagi sinf allaqachon mavjud")
+
     cls = await _repo(db).create(
         teacher_id=teacher_id,
         name=data.name,
