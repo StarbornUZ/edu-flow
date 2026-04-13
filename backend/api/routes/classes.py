@@ -79,10 +79,17 @@ async def list_classes(user: CurrentUser, db: DBSession):
     repo = _repo(db)
     if user.role == UserRole.student:
         classes = await repo.get_enrolled_by_student(user.id)
-    elif user.role == UserRole.org_admin:
+    elif user.role in (UserRole.org_admin, UserRole.admin):
         classes = await repo.get_by_org(user.org_id)
-    else:  # teacher yoki admin
-        classes = await repo.get_by_teacher(user.id)
+    elif user.role == UserRole.teacher:
+        # O'qituvchi o'z tashkilotiga tegishli barcha sinflarni ko'radi;
+        # agar tashkilotga kirmagan bo'lsa — faqat o'z sinflarini
+        if user.org_id:
+            classes = await repo.get_by_org(user.org_id)
+        else:
+            classes = await repo.get_by_teacher(user.id)
+    else:
+        classes = []
     return [ClassResponse.model_validate(c) for c in classes]
 
 
@@ -102,6 +109,15 @@ async def create_class(data: ClassCreate, user: CurrentTeacher, db: DBSession):
         user.id if user.role == UserRole.teacher else None
     )
     org_id = data.org_id or user.org_id
+
+    from sqlalchemy import select
+    from backend.db.models.class_ import Class
+    dup = await db.execute(
+        select(Class).where(Class.org_id == org_id, Class.name == data.name)
+    )
+    if dup.scalar_one_or_none():
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Bu nomdagi sinf allaqachon mavjud")
+
     cls = await _repo(db).create(
         teacher_id=teacher_id,
         name=data.name,
@@ -269,7 +285,13 @@ async def enroll_class_to_course(
 
     repo = _repo(db)
     cls = await _get_class_or_404(repo, class_id)
-    _check_owner(cls, teacher)
+
+    # Sinf egasi yoki bir xil tashkilotdagi o'qituvchi kirishi mumkin
+    if teacher.role == UserRole.teacher:
+        if cls.teacher_id != teacher.id and cls.org_id != teacher.org_id:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu sinf sizga tegishli emas")
+    elif teacher.role not in (UserRole.org_admin, UserRole.admin):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Ruxsat yo'q")
 
     course = await CourseRepository(db).get_by_id(data.course_id)
     if not course:
@@ -353,3 +375,30 @@ async def remove_student(
     removed = await repo.remove_student(class_id, student_id)
     if not removed:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "O'quvchi bu sinfda topilmadi")
+
+
+# ---------------------------------------------------------------------------
+# DELETE /classes/{id}  — sinfni o'chirish (org_admin yoki admin)
+# ---------------------------------------------------------------------------
+
+@router.delete(
+    "/{class_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Sinfni o'chirish (org_admin yoki admin)",
+)
+async def delete_class(
+    class_id: uuid.UUID,
+    user: CurrentUser,
+    db: DBSession,
+):
+    if user.role not in (UserRole.org_admin, UserRole.admin):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Ruxsat yo'q")
+
+    repo = _repo(db)
+    cls = await _get_class_or_404(repo, class_id)
+
+    if user.role == UserRole.org_admin and cls.org_id != user.org_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu sinf sizning tashkilotingizga tegishli emas")
+
+    await db.delete(cls)
+    await db.commit()

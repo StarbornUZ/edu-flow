@@ -1,7 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { LogOut, User, BookOpen, Bell, CheckCircle, XCircle } from "lucide-react";
+import Link from "next/link";
+import { LogOut, User, BookOpen, Bell, CheckCircle, XCircle, Swords } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -13,6 +14,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useAuthStore } from "@/stores/auth.store";
 import { api } from "@/lib/api";
+import type { Notification } from "@/types";
 
 const roleBadgeColors: Record<string, string> = {
   admin: "bg-red-100 text-red-700 border-red-200",
@@ -56,12 +58,19 @@ function InvitationBell() {
     refetchOnWindowFocus: true,
   });
 
+  const { data: notifications } = useQuery<Notification[]>({
+    queryKey: ["notifications"],
+    queryFn: () => api.get<Notification[]>("/notifications").then((r) => r.data),
+    enabled: !!user && user.role === "student",
+    refetchInterval: 30_000,
+    refetchOnWindowFocus: true,
+  });
+
   const accept = useMutation({
     mutationFn: (id: string) => api.post(`/users/me/invitations/${id}/accept`),
     onSuccess: () => {
       toast.success("Taklif qabul qilindi. Tashkilotga qo'shildingiz!");
       queryClient.invalidateQueries({ queryKey: ["my-invitations"] });
-      // Refresh user in auth store
       window.location.reload();
     },
     onError: () => toast.error("Qabul qilishda xatolik"),
@@ -76,32 +85,72 @@ function InvitationBell() {
     onError: () => toast.error("Rad etishda xatolik"),
   });
 
+  const markRead = useMutation({
+    mutationFn: (id: string) => api.post(`/notifications/${id}/read`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["notifications"] }),
+  });
+
   if (!user || user.role === "admin") return null;
 
-  const count = invitations?.length ?? 0;
+  const invCount = invitations?.length ?? 0;
+  const unreadNotifs = (notifications ?? []).filter((n) => !n.is_read);
+  const liveInvites = unreadNotifs.filter((n) => n.type === "live_session_invite");
+  const totalCount = invCount + liveInvites.length;
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" size="sm" className="relative h-9 w-9 p-0">
           <Bell className="h-4 w-4" />
-          {count > 0 && (
+          {totalCount > 0 && (
             <span className="absolute -top-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white">
-              {count}
+              {totalCount}
             </span>
           )}
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-80 p-0">
         <div className="border-b px-4 py-3">
-          <p className="text-sm font-semibold">Takliflar</p>
+          <p className="text-sm font-semibold">Bildirishnomalar</p>
         </div>
-        {count === 0 ? (
+
+        {totalCount === 0 ? (
           <div className="py-8 text-center text-sm text-muted-foreground">
-            Yangi taklif yo&apos;q
+            Yangi bildirishnoma yo&apos;q
           </div>
         ) : (
           <div className="max-h-96 overflow-y-auto divide-y">
+            {/* Live session invites */}
+            {liveInvites.map((notif) => {
+              const sessionId = notif.data?.session_id as string | undefined;
+              return (
+                <div key={notif.id} className="px-4 py-3 space-y-2 bg-blue-50/50">
+                  <div className="flex items-start gap-2">
+                    <Swords className="h-4 w-4 text-blue-600 shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                      <p className="text-sm font-medium">{notif.title}</p>
+                      {notif.body && (
+                        <p className="text-xs text-muted-foreground mt-0.5">{notif.body}</p>
+                      )}
+                    </div>
+                  </div>
+                  {sessionId && (
+                    <Button
+                      asChild
+                      size="sm"
+                      className="w-full h-7 text-xs"
+                      onClick={() => markRead.mutate(notif.id)}
+                    >
+                      <Link href={`/student/live/${sessionId}`}>
+                        Musobaqaga kirish
+                      </Link>
+                    </Button>
+                  )}
+                </div>
+              );
+            })}
+
+            {/* Org invitations */}
             {invitations?.map((inv) => (
               <div key={inv.id} className="px-4 py-3 space-y-2">
                 <div>
@@ -171,23 +220,13 @@ export default function Navbar() {
             <>
               <div className="flex items-center gap-2">
                 <User className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm font-medium hidden sm:inline">
-                  {user.full_name}
-                </span>
-                <Badge
-                  variant="outline"
-                  className={roleBadgeColors[user.role] || ""}
-                >
+                <span className="text-sm font-medium hidden sm:inline">{user.full_name}</span>
+                <Badge variant="outline" className={roleBadgeColors[user.role] || ""}>
                   {roleLabels[user.role] || user.role}
                 </Badge>
               </div>
               <InvitationBell />
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleLogout}
-                className="gap-1"
-              >
+              <Button variant="ghost" size="sm" onClick={handleLogout} className="gap-1">
                 <LogOut className="h-4 w-4" />
                 <span className="hidden sm:inline">Chiqish</span>
               </Button>

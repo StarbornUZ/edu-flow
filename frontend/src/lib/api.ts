@@ -11,6 +11,14 @@ function getBaseUrl(): string {
 
 export const BASE_URL = getBaseUrl();
 
+export function getWsUrl(): string {
+  if (process.env.NEXT_PUBLIC_WS_URL) return process.env.NEXT_PUBLIC_WS_URL;
+  if (typeof window !== "undefined") {
+    return `ws://${window.location.hostname}:8000/api/v1`;
+  }
+  return "ws://localhost:8000/api/v1";
+}
+
 export const api = axios.create({
   baseURL: BASE_URL,
   headers: { "Content-Type": "application/json" },

@@ -2,9 +2,9 @@
 
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useParams } from "next/navigation";
-import { Play, SkipForward, Square, Users, Trophy, Star } from "lucide-react";
+import { Play, SkipForward, Square, Users, Trophy, Star, Copy, Check } from "lucide-react";
 import { motion } from "framer-motion";
-import { api } from "@/lib/api";
+import { api, getWsUrl } from "@/lib/api";
 import type { LiveSession, LiveSessionTeam } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -18,7 +18,13 @@ import {
 
 interface WSMessage {
   type: string;
-  data?: Record<string, unknown>;
+  connected_count?: number;
+  teams?: LiveSessionTeam[];
+  winner_team?: string;
+  mvp?: { student_id: string; student_name?: string; team_name?: string | null; score: number } | null;
+  question?: { question_text: string; options: string[]; time_limit_sec: number };
+  index?: number;
+  total?: number;
 }
 
 export default function LiveSessionControlPage() {
@@ -30,53 +36,39 @@ export default function LiveSessionControlPage() {
   const [connectedCount, setConnectedCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [sessionEnded, setSessionEnded] = useState(false);
-  const [winner, setWinner] = useState<LiveSessionTeam | null>(null);
-  const [mvp, setMvp] = useState<string | null>(null);
+  const [winnerTeam, setWinnerTeam] = useState<string | null>(null);
+  const [mvp, setMvp] = useState<{ name: string; team: string | null } | null>(null);
+  const [currentQuestion, setCurrentQuestion] = useState<WSMessage["question"] | null>(null);
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [copied, setCopied] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
 
   const handleWSMessage = useCallback((event: MessageEvent) => {
     try {
       const msg: WSMessage = JSON.parse(event.data);
       switch (msg.type) {
-        case "player_joined":
-          setConnectedCount((prev) => prev + 1);
+        case "participant_joined":
+          if (typeof msg.connected_count === "number") setConnectedCount(msg.connected_count);
           break;
-        case "player_left":
-          setConnectedCount((prev) => Math.max(0, prev - 1));
+        case "participant_left":
+          if (typeof msg.connected_count === "number") setConnectedCount(msg.connected_count);
           break;
         case "leaderboard_update":
-          if (msg.data && Array.isArray(msg.data.teams)) {
-            setTeams(msg.data.teams as LiveSessionTeam[]);
-          }
+          if (Array.isArray(msg.teams)) setTeams(msg.teams);
           break;
-        case "connected_count":
-          if (msg.data && typeof msg.data.count === "number") {
-            setConnectedCount(msg.data.count);
+        case "next_question":
+          if (msg.question) {
+            setCurrentQuestion(msg.question);
+            setCurrentQuestionIndex(msg.index ?? 0);
           }
           break;
         case "session_ended":
           setSessionEnded(true);
-          if (msg.data) {
-            if (msg.data.winner) {
-              setWinner(msg.data.winner as LiveSessionTeam);
-            }
-            if (typeof msg.data.mvp === "string") {
-              setMvp(msg.data.mvp);
-            }
+          if (msg.winner_team) setWinnerTeam(msg.winner_team);
+          if (msg.mvp?.student_name) {
+            setMvp({ name: msg.mvp.student_name, team: msg.mvp.team_name ?? null });
           }
-          break;
-        case "question_changed":
-          if (msg.data && typeof msg.data.current_question_index === "number") {
-            setSession((prev) =>
-              prev
-                ? {
-                    ...prev,
-                    current_question_index:
-                      msg.data!.current_question_index as number,
-                  }
-                : prev
-            );
-          }
+          if (Array.isArray(msg.teams)) setTeams(msg.teams);
           break;
         default:
           break;
@@ -87,35 +79,44 @@ export default function LiveSessionControlPage() {
   }, []);
 
   useEffect(() => {
-    // Fetch session data
-    api
-      .get<LiveSession>(`/live-sessions/${sessionId}`)
+    // Fetch session data (critical) + results/teams (best-effort, independent)
+    api.get<LiveSession>(`/live-sessions/${sessionId}`)
       .then((res) => {
-        setSession(res.data);
-        if (res.data.status === "finished") {
-          setSessionEnded(true);
+        const s = res.data;
+        setSession(s);
+        if (s.status === "finished") setSessionEnded(true);
+        if (s.questions && s.questions.length > 0) {
+          const idx = s.current_question_index ?? 0;
+          const q = s.questions[idx] as Record<string, unknown>;
+          setCurrentQuestion({
+            question_text: q.question_text as string,
+            options: q.options as string[],
+            time_limit_sec: 30,
+          });
+          setCurrentQuestionIndex(idx);
         }
       })
       .catch(() => {})
       .finally(() => setLoading(false));
 
-    // Connect WebSocket
-    const wsUrl =
-      process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000/api/v1";
-    const token = localStorage.getItem("access_token");
-    const ws = new WebSocket(
-      `${wsUrl}/live-sessions/ws/${sessionId}?token=${token}`
-    );
+    api.get<{ teams: LiveSessionTeam[] }>(`/live-sessions/${sessionId}/results`)
+      .then((res) => {
+        if (Array.isArray(res.data.teams) && res.data.teams.length > 0) {
+          setTeams(res.data.teams);
+        }
+      })
+      .catch(() => {});
 
+    // Connect WebSocket
+    const wsUrl = getWsUrl();
+    const token = localStorage.getItem("access_token");
+    const ws = new WebSocket(`${wsUrl}/live-sessions/ws/${sessionId}?token=${token}`);
     ws.onmessage = handleWSMessage;
     ws.onclose = () => {};
     ws.onerror = () => {};
-
     wsRef.current = ws;
 
-    return () => {
-      ws.close();
-    };
+    return () => ws.close();
   }, [sessionId, handleWSMessage]);
 
   const handleStart = async () => {
@@ -123,7 +124,7 @@ export default function LiveSessionControlPage() {
       await api.post(`/live-sessions/${sessionId}/start`);
       setSession((prev) => (prev ? { ...prev, status: "active" } : prev));
     } catch {
-      // handle error
+      //
     }
   };
 
@@ -131,7 +132,7 @@ export default function LiveSessionControlPage() {
     try {
       await api.post(`/live-sessions/${sessionId}/next`);
     } catch {
-      // handle error
+      //
     }
   };
 
@@ -141,18 +142,27 @@ export default function LiveSessionControlPage() {
       setSession((prev) => (prev ? { ...prev, status: "finished" } : prev));
       setSessionEnded(true);
     } catch {
-      // handle error
+      //
     }
+  };
+
+  const studentJoinUrl = typeof window !== "undefined"
+    ? `${window.location.origin}/student/live/${sessionId}`
+    : `/student/live/${sessionId}`;
+
+  const handleCopyUrl = () => {
+    navigator.clipboard.writeText(studentJoinUrl).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
   };
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-900 text-white p-6 space-y-6">
-        <Skeleton className="h-8 w-48 bg-gray-700" />
+      <div className="min-h-screen bg-white p-6 space-y-6">
+        <Skeleton className="h-8 w-48" />
         <div className="grid gap-4 md:grid-cols-3">
-          {[1, 2, 3].map((i) => (
-            <Skeleton key={i} className="h-40 bg-gray-700" />
-          ))}
+          {[1, 2, 3].map((i) => <Skeleton key={i} className="h-40" />)}
         </div>
       </div>
     );
@@ -160,37 +170,31 @@ export default function LiveSessionControlPage() {
 
   if (!session) {
     return (
-      <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center">
-        <p className="text-gray-400">Sessiya topilmadi</p>
+      <div className="min-h-screen bg-white flex items-center justify-center">
+        <p className="text-gray-500">Sessiya topilmadi</p>
       </div>
     );
   }
 
-  const currentQ =
-    session.questions && session.questions[session.current_question_index];
-
-  // Sort teams by score descending
   const sortedTeams = [...teams].sort((a, b) => b.score - a.score);
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white p-6 -m-4 md:-m-6">
+    <div className="min-h-screen bg-gray-50 p-6 -m-4 md:-m-6">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-4">
         <div>
-          <h1 className="text-2xl font-bold">Jonli musobaqa</h1>
+          <h1 className="text-2xl font-bold text-gray-900">Jonli musobaqa</h1>
           <div className="flex items-center gap-3 mt-1">
-            <Badge variant="outline" className="text-white border-gray-600">
+            <Badge variant="secondary">
               {session.game_type === "blitz"
                 ? "Blitz Jang"
                 : session.game_type === "lucky_card"
                 ? "Omad Sinovi"
                 : "Zanjir Savol"}
             </Badge>
-            <div className="flex items-center gap-1 text-gray-400">
+            <div className="flex items-center gap-1 text-gray-500">
               <Users className="h-4 w-4" />
-              <span className="text-sm">
-                {connectedCount} ta o&apos;quvchi
-              </span>
+              <span className="text-sm">{connectedCount} ta o&apos;quvchi</span>
             </div>
           </div>
         </div>
@@ -198,28 +202,18 @@ export default function LiveSessionControlPage() {
         {/* Controls */}
         <div className="flex gap-2">
           {session.status === "pending" && (
-            <Button
-              onClick={handleStart}
-              className="bg-green-600 hover:bg-green-700"
-            >
+            <Button onClick={handleStart} className="bg-green-600 hover:bg-green-700">
               <Play className="h-4 w-4 mr-2" />
               Musobaqani boshlash
             </Button>
           )}
           {session.status === "active" && (
             <>
-              <Button
-                onClick={handleNext}
-                variant="outline"
-                className="border-gray-600 text-white hover:bg-gray-800"
-              >
+              <Button onClick={handleNext} variant="outline">
                 <SkipForward className="h-4 w-4 mr-2" />
                 Keyingi savol
               </Button>
-              <Button
-                onClick={handleEnd}
-                variant="destructive"
-              >
+              <Button onClick={handleEnd} variant="destructive">
                 <Square className="h-4 w-4 mr-2" />
                 Yakunlash
               </Button>
@@ -228,6 +222,17 @@ export default function LiveSessionControlPage() {
         </div>
       </div>
 
+      {/* Student join URL */}
+      {!sessionEnded && (
+        <div className="flex items-center gap-2 mb-6 p-3 rounded-lg bg-white border border-gray-200 shadow-sm">
+          <span className="text-xs text-gray-500 shrink-0">O&apos;quvchilar havolasi:</span>
+          <span className="text-xs text-blue-600 truncate flex-1">{studentJoinUrl}</span>
+          <Button variant="ghost" size="sm" className="shrink-0 h-7 px-2" onClick={handleCopyUrl}>
+            {copied ? <Check className="h-3 w-3 text-green-500" /> : <Copy className="h-3 w-3" />}
+          </Button>
+        </div>
+      )}
+
       {/* Session Ended */}
       {sessionEnded && (
         <motion.div
@@ -235,49 +240,36 @@ export default function LiveSessionControlPage() {
           animate={{ opacity: 1, scale: 1 }}
           className="text-center py-12 mb-6"
         >
-          <Trophy className="h-16 w-16 text-yellow-400 mx-auto mb-4" />
-          <h2 className="text-3xl font-bold mb-2">Musobaqa yakunlandi!</h2>
-          {winner && (
-            <p className="text-xl text-yellow-400">
-              G&apos;olib: {winner.name} ({winner.score} ball)
-            </p>
-          )}
+          <Trophy className="h-16 w-16 text-yellow-500 mx-auto mb-4" />
+          <h2 className="text-3xl font-bold text-gray-900 mb-2">Musobaqa yakunlandi!</h2>
+          {winnerTeam && <p className="text-xl text-yellow-600">G&apos;olib: {winnerTeam}</p>}
           {mvp && (
             <div className="flex items-center justify-center gap-2 mt-2">
-              <Star className="h-5 w-5 text-yellow-400" />
-              <p className="text-gray-300">MVP: {mvp}</p>
+              <Star className="h-5 w-5 text-yellow-500" />
+              <p className="text-gray-600">
+                MVP: <strong>{mvp.name}</strong>
+                {mvp.team && <span className="text-gray-400"> ({mvp.team})</span>}
+              </p>
             </div>
           )}
         </motion.div>
       )}
 
       {/* Current Question */}
-      {currentQ && !sessionEnded && (
-        <Card className="bg-gray-800 border-gray-700 mb-6">
+      {currentQuestion && !sessionEnded && (
+        <Card className="bg-white border-gray-200 shadow-sm mb-6">
           <CardHeader>
-            <CardTitle className="text-white text-sm text-gray-400">
-              Savol {session.current_question_index + 1} /{" "}
-              {session.questions.length}
+            <CardTitle className="text-sm text-gray-500">
+              Savol {currentQuestionIndex + 1}{session.questions && ` / ${session.questions.length}`}
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-lg font-medium text-white">
-              {(currentQ as Record<string, unknown>).question_text as string}
-            </p>
-            {Array.isArray(
-              (currentQ as Record<string, unknown>).options
-            ) && (
+            <p className="text-lg font-medium text-gray-900">{currentQuestion.question_text}</p>
+            {Array.isArray(currentQuestion.options) && (
               <div className="grid grid-cols-2 gap-2 mt-4">
-                {(
-                  (currentQ as Record<string, unknown>).options as string[]
-                ).map((opt, idx) => (
-                  <div
-                    key={idx}
-                    className="p-3 rounded-lg bg-gray-700 text-gray-200"
-                  >
-                    <span className="font-medium mr-2">
-                      {String.fromCharCode(65 + idx)})
-                    </span>
+                {currentQuestion.options.map((opt, idx) => (
+                  <div key={idx} className="p-3 rounded-lg bg-gray-100 text-gray-700">
+                    <span className="font-medium mr-2">{String.fromCharCode(65 + idx)})</span>
                     {opt}
                   </div>
                 ))}
@@ -290,7 +282,7 @@ export default function LiveSessionControlPage() {
       {/* Leaderboard */}
       {sortedTeams.length > 0 && (
         <div>
-          <h2 className="text-lg font-semibold mb-4">Natijalar jadvali</h2>
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">Natijalar jadvali</h2>
           <div className="grid gap-4 md:grid-cols-3">
             {sortedTeams.map((team, idx) => (
               <motion.div
@@ -299,26 +291,12 @@ export default function LiveSessionControlPage() {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: idx * 0.1 }}
               >
-                <Card
-                  className="border-gray-700"
-                  style={{
-                    backgroundColor: team.color
-                      ? `${team.color}20`
-                      : "#1f2937",
-                  }}
-                >
+                <Card className="bg-white border-gray-200 shadow-sm" style={{ borderTopColor: team.color, borderTopWidth: 4 }}>
                   <CardContent className="pt-6">
                     <div className="text-center">
-                      {idx === 0 && (
-                        <Trophy className="h-6 w-6 text-yellow-400 mx-auto mb-2" />
-                      )}
-                      <p
-                        className="font-bold text-lg"
-                        style={{ color: team.color || "#fff" }}
-                      >
-                        {team.name}
-                      </p>
-                      <p className="text-3xl font-bold text-white mt-2">
+                      {idx === 0 && <Trophy className="h-6 w-6 text-yellow-500 mx-auto mb-2" />}
+                      <p className="font-bold text-lg text-gray-900">{team.name}</p>
+                      <p className="text-3xl font-bold mt-2" style={{ color: team.color || "#3B82F6" }}>
                         {team.score}
                       </p>
                       <p className="text-xs text-gray-400 mt-1">ball</p>
@@ -331,15 +309,13 @@ export default function LiveSessionControlPage() {
         </div>
       )}
 
-      {/* Empty state when no teams yet */}
+      {/* Empty state */}
       {sortedTeams.length === 0 && !sessionEnded && (
-        <Card className="bg-gray-800 border-gray-700">
+        <Card className="bg-white border-gray-200">
           <CardContent className="py-12 text-center">
-            <Users className="h-12 w-12 text-gray-500 mx-auto mb-4" />
-            <p className="text-gray-400">
-              O&apos;quvchilar qo&apos;shilishini kutilmoqda...
-            </p>
-            <p className="text-sm text-gray-500 mt-2">
+            <Users className="h-12 w-12 text-gray-300 mx-auto mb-4" />
+            <p className="text-gray-500">O&apos;quvchilar qo&apos;shilishini kutilmoqda...</p>
+            <p className="text-sm text-gray-400 mt-2">
               O&apos;quvchilar qo&apos;shilganida natijalar bu yerda ko&apos;rinadi
             </p>
           </CardContent>

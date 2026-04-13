@@ -42,6 +42,7 @@ from backend.db.models.live_session import (
 from backend.db.models.badge import Badge, StudentBadge
 from backend.db.models.parent_student import ParentStudent
 from backend.db.models.org_invitation import OrgInvitation, InvitationStatus
+from backend.db.models.notification import Notification
 
 __all__ = [
     # User
@@ -97,4 +98,6 @@ __all__ = [
     # OrgInvitation
     "OrgInvitation",
     "InvitationStatus",
+    # Notification
+    "Notification",
 ]

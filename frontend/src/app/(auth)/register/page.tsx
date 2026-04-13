@@ -7,7 +7,7 @@ import { z } from "zod";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
-import { BookOpen, Building2, CheckCircle } from "lucide-react";
+import { BookOpen, Building2, CheckCircle, Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -58,6 +58,7 @@ export default function RegisterPage() {
   const setAuth = useAuthStore((s) => s.setAuth);
   const [error, setError] = useState<string | null>(null);
   const [orgRequestSent, setOrgRequestSent] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   const {
     register,
@@ -223,7 +224,16 @@ export default function RegisterPage() {
 
             <div className="space-y-2">
               <Label htmlFor="password">Parol</Label>
-              <Input id="password" type="password" placeholder="Kamida 8 ta belgi" {...register("password")} />
+              <div className="relative">
+                <Input id="password" type={showPassword ? "text" : "password"} placeholder="Kamida 8 ta belgi" {...register("password")} />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((v) => !v)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                >
+                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
               {errors.password && <p className="text-sm text-red-500">{errors.password.message}</p>}
             </div>
 
