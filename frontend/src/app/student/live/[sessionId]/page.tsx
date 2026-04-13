@@ -317,37 +317,103 @@ export default function StudentLivePage() {
     wsRef.current.send(JSON.stringify({ type: "select_card", slot }));
   };
 
+  // ── GROUP SCORE PANEL ──────────────────────────────────────────────────────
+  const GroupPanel = () => {
+    if (allParticipants.length === 0) return null;
+    const sortedTeams = [...teams].sort((a, b) => b.score - a.score);
+    const teamsToShow = sortedTeams.length > 0 ? sortedTeams : Array.from(
+      new Set(allParticipants.map((p) => p.team_id).filter(Boolean))
+    ).map((tid) => ({ id: tid!, name: tid!, score: 0, color: "#3B82F6", session_id: "" }));
+
+    return (
+      <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden shrink-0">
+        <div className="px-3 py-2 bg-gray-50 border-b border-gray-100">
+          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Guruhlar</span>
+        </div>
+        <div className="divide-y divide-gray-100">
+          {teamsToShow.map((team) => {
+            const members = allParticipants
+              .filter((p) => p.team_id === team.id)
+              .sort((a, b) => b.personal_score - a.personal_score);
+            const isMyTeam = myTeam?.id === team.id;
+            return (
+              <div key={team.id} className={`px-3 py-2 ${isMyTeam ? "bg-blue-50/40" : ""}`}>
+                <div className="flex items-center gap-2 mb-1.5">
+                  <div className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: team.color || "#3B82F6" }} />
+                  <span className={`text-xs font-bold flex-1 truncate ${isMyTeam ? "text-blue-800" : "text-gray-800"}`}>
+                    {team.name}
+                  </span>
+                  <span className={`text-xs font-bold tabular-nums ${isMyTeam ? "text-blue-700" : "text-gray-700"}`}>
+                    {team.score}
+                  </span>
+                </div>
+                <div className="space-y-0.5 pl-4">
+                  {members.map((m) => {
+                    const isMe = m.student_id === currentUser?.id;
+                    return (
+                      <div key={m.student_id} className={`flex items-center justify-between text-xs py-0.5 rounded ${isMe ? "font-semibold" : ""}`}>
+                        <span className={`truncate flex-1 ${isMe ? "text-blue-700" : "text-gray-600"}`}>
+                          {isMe ? "● " : "· "}{m.student_name}
+                        </span>
+                        <span className={`ml-2 tabular-nums ${isMe ? "text-blue-700" : "text-gray-400"}`}>
+                          {m.personal_score}
+                        </span>
+                      </div>
+                    );
+                  })}
+                  {members.length === 0 && (
+                    <p className="text-xs text-gray-400">—</p>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
   // ── LOBBY ──────────────────────────────────────────────────────────────────
   if (state === "lobby") {
     return (
-      <div className="min-h-screen bg-white flex flex-col items-center justify-center gap-6 p-6">
-        {myTeam && (
-          <div
-            className="px-5 py-2 rounded-full text-white font-semibold text-sm shadow-sm"
-            style={{ backgroundColor: myTeam.color }}
-          >
-            Sizning guruhingiz: {myTeam.name}
+      <div className="min-h-screen bg-white p-6 flex flex-col gap-6">
+        {/* Top: team badge + waiting message */}
+        <div className="flex flex-col items-center gap-4 pt-8">
+          {myTeam && (
+            <div
+              className="px-5 py-2 rounded-full text-white font-semibold text-sm shadow-sm"
+              style={{ backgroundColor: myTeam.color }}
+            >
+              Sizning guruhingiz: {myTeam.name}
+            </div>
+          )}
+          <div className="text-center space-y-2">
+            <div className={`h-4 w-4 rounded-full mx-auto mb-2 ${connected ? "bg-green-500" : "bg-red-400"}`} />
+            <h1 className="text-xl font-bold text-gray-900">Musobaqa boshlanishini kutilmoqda...</h1>
+            <p className="text-gray-500 text-sm">O&apos;qituvchi musobaqani boshlaganidan so&apos;ng savollar ko&apos;rinadi</p>
+            {connectedCount > 0 && (
+              <p className="text-gray-400 text-sm">{connectedCount} ta ishtirokchi ulandi</p>
+            )}
+          </div>
+          <div className="flex gap-1">
+            {[0, 1, 2].map((i) => (
+              <motion.div
+                key={i}
+                className="h-2 w-2 rounded-full bg-blue-500"
+                animate={{ opacity: [1, 0.3, 1] }}
+                transition={{ duration: 1.2, repeat: Infinity, delay: i * 0.2 }}
+              />
+            ))}
+          </div>
+          <p className="text-xs text-gray-400">Sizning hisobingiz: {myScore} ball</p>
+        </div>
+
+        {/* Group panel — visible as soon as teams are assigned */}
+        {allParticipants.length > 0 && (
+          <div className="w-full max-w-xs mx-auto">
+            <GroupPanel />
           </div>
         )}
-        <div className="text-center space-y-3">
-          <div className={`h-4 w-4 rounded-full mx-auto mb-4 ${connected ? "bg-green-500" : "bg-red-400"}`} />
-          <h1 className="text-2xl font-bold text-gray-900">Musobaqa boshlanishini kutilmoqda...</h1>
-          <p className="text-gray-500 text-sm">O&apos;qituvchi musobaqani boshlaganidan so&apos;ng savollar ko&apos;rinadi</p>
-          {connectedCount > 0 && (
-            <p className="text-gray-400 text-sm">{connectedCount} ta ishtirokchi ulandi</p>
-          )}
-        </div>
-        <div className="flex gap-1">
-          {[0, 1, 2].map((i) => (
-            <motion.div
-              key={i}
-              className="h-2 w-2 rounded-full bg-blue-500"
-              animate={{ opacity: [1, 0.3, 1] }}
-              transition={{ duration: 1.2, repeat: Infinity, delay: i * 0.2 }}
-            />
-          ))}
-        </div>
-        <p className="text-xs text-gray-400">Sizning hisobingiz: {myScore} ball</p>
       </div>
     );
   }
@@ -478,57 +544,45 @@ export default function StudentLivePage() {
           </div>
         </motion.div>
 
-        {/* Medal leaderboard */}
+        {/* Unified leaderboard + team composition */}
         {sortedTeams.length > 0 && (
-          <div className="max-w-md mx-auto space-y-2 mb-8">
-            <h2 className="text-lg font-semibold mb-3 text-center text-gray-900">Jamoalar reytingi</h2>
-            {sortedTeams.map((team, idx) => {
-              const medal = idx === 0 ? "🏆" : idx === 1 ? "🥈" : idx === 2 ? "🥉" : null;
-              return (
-                <Card key={team.id} className="border-gray-200 shadow-sm" style={{ borderLeftColor: team.color, borderLeftWidth: 4 }}>
-                  <CardContent className="py-3 flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      {medal
-                        ? <span className="text-2xl w-8 text-center">{medal}</span>
-                        : <span className="text-sm font-bold text-gray-400 w-8 text-center">#{idx + 1}</span>
-                      }
-                      <span className="font-semibold text-gray-800">{team.name}</span>
-                    </div>
-                    <span className="text-2xl font-bold text-gray-900">{team.score}</span>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
-        )}
-
-        {/* Team member composition */}
-        {fullResults && sortedTeams.length > 0 && (
-          <div className="max-w-md mx-auto mb-8">
-            <h2 className="text-lg font-semibold mb-3 text-center text-gray-900">Jamoa a&apos;zolari</h2>
+          <div className="max-w-md mx-auto mb-8 w-full">
+            <h2 className="text-lg font-semibold mb-3 text-center text-gray-900">Guruhlar natijalari</h2>
             <div className="space-y-3">
-              {sortedTeams.map((team) => {
-                const members = fullResults.participants.filter((p) => p.team_id === team.id);
+              {sortedTeams.map((team, idx) => {
+                const medal = idx === 0 ? "🏆" : idx === 1 ? "🥈" : idx === 2 ? "🥉" : null;
+                const members = (fullResults?.participants ?? allParticipants).filter((p) => p.team_id === team.id);
                 return (
-                  <div key={team.id} className="border rounded-xl p-4 bg-white shadow-sm">
-                    <div className="flex items-center gap-2 mb-3">
-                      <div className="h-3 w-3 rounded-full shrink-0" style={{ backgroundColor: team.color }} />
-                      <h3 className="font-semibold text-sm text-gray-800">{team.name}</h3>
-                      <span className="text-sm text-gray-400 ml-auto">{team.score} ball</span>
-                    </div>
-                    {members.map((m) => (
-                      <div key={m.student_id} className="flex justify-between text-sm py-1 pl-5">
-                        <span className="text-gray-700 flex items-center gap-1">
-                          {m.is_mvp && <Star className="h-3 w-3 text-yellow-500 shrink-0" />}
-                          {m.student_name}
-                        </span>
-                        <span className="text-gray-400">{m.personal_score} ball</span>
+                  <Card key={team.id} className="border-gray-200 shadow-sm" style={{ borderLeftColor: team.color, borderLeftWidth: 4 }}>
+                    <CardContent className="py-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          {medal
+                            ? <span className="text-2xl w-8 text-center">{medal}</span>
+                            : <span className="text-sm font-bold text-gray-400 w-8 text-center">#{idx + 1}</span>
+                          }
+                          <span className="font-semibold text-gray-800">{team.name}</span>
+                        </div>
+                        <span className="text-2xl font-bold text-gray-900">{team.score}</span>
                       </div>
-                    ))}
-                    {members.length === 0 && (
-                      <p className="text-xs text-gray-400 pl-5">A&apos;zolar ma&apos;lumoti yo&apos;q</p>
-                    )}
-                  </div>
+                      {members.length > 0 && (
+                        <div className="mt-2 space-y-0.5 pl-11">
+                          {members.map((m) => {
+                            const isMe = m.student_id === currentUser?.id;
+                            return (
+                              <div key={m.student_id} className="flex justify-between text-sm py-0.5">
+                                <span className={`flex items-center gap-1 ${isMe ? "font-semibold text-blue-700" : "text-gray-600"}`}>
+                                  {m.is_mvp && <Star className="h-3 w-3 text-yellow-500 shrink-0" />}
+                                  {isMe ? "● " : "· "}{m.student_name}
+                                </span>
+                                <span className={`${isMe ? "text-blue-600 font-semibold" : "text-gray-400"}`}>{m.personal_score} ball</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
                 );
               })}
             </div>
@@ -609,65 +663,6 @@ export default function StudentLivePage() {
       </div>
     );
   }
-
-  // ── GROUP SCORE PANEL ──────────────────────────────────────────────────────
-  const GroupPanel = () => {
-    if (allParticipants.length === 0) return null;
-    const sortedTeams = [...teams].sort((a, b) => b.score - a.score);
-    // If no leaderboard_update yet, group participants by team_id manually
-    const teamsToShow = sortedTeams.length > 0 ? sortedTeams : Array.from(
-      new Set(allParticipants.map((p) => p.team_id).filter(Boolean))
-    ).map((tid) => ({ id: tid!, name: tid!, score: 0, color: "#3B82F6", session_id: "" }));
-
-    return (
-      <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden shrink-0">
-        <div className="px-3 py-2 bg-gray-50 border-b border-gray-100">
-          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Guruhlar</span>
-        </div>
-        <div className="divide-y divide-gray-100">
-          {teamsToShow.map((team) => {
-            const members = allParticipants
-              .filter((p) => p.team_id === team.id)
-              .sort((a, b) => b.personal_score - a.personal_score);
-            const isMyTeam = myTeam?.id === team.id;
-            return (
-              <div key={team.id} className={`px-3 py-2 ${isMyTeam ? "bg-blue-50/40" : ""}`}>
-                {/* Team row */}
-                <div className="flex items-center gap-2 mb-1.5">
-                  <div className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: team.color || "#3B82F6" }} />
-                  <span className={`text-xs font-bold flex-1 truncate ${isMyTeam ? "text-blue-800" : "text-gray-800"}`}>
-                    {team.name}
-                  </span>
-                  <span className={`text-xs font-bold tabular-nums ${isMyTeam ? "text-blue-700" : "text-gray-700"}`}>
-                    {team.score}
-                  </span>
-                </div>
-                {/* Members */}
-                <div className="space-y-0.5 pl-4">
-                  {members.map((m) => {
-                    const isMe = m.student_id === currentUser?.id;
-                    return (
-                      <div key={m.student_id} className={`flex items-center justify-between text-xs py-0.5 rounded ${isMe ? "font-semibold" : ""}`}>
-                        <span className={`truncate flex-1 ${isMe ? "text-blue-700" : "text-gray-600"}`}>
-                          {isMe ? "● " : "· "}{m.student_name}
-                        </span>
-                        <span className={`ml-2 tabular-nums ${isMe ? "text-blue-700" : "text-gray-400"}`}>
-                          {m.personal_score}
-                        </span>
-                      </div>
-                    );
-                  })}
-                  {members.length === 0 && (
-                    <p className="text-xs text-gray-400">—</p>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    );
-  };
 
   // ── QUESTION / ANSWERED ────────────────────────────────────────────────────
   const hasGroupPanel = allParticipants.length > 0;

@@ -237,7 +237,15 @@ export default function LiveSessionControlPage() {
     setAssigningTeams(true);
     try {
       const res = await api.post<{ teams: LiveSessionTeam[] }>(`/live-sessions/${sessionId}/assign-teams`);
-      if (Array.isArray(res.data.teams)) setTeams(res.data.teams);
+      if (Array.isArray(res.data.teams)) {
+        setTeams(res.data.teams);
+        // Load participant names for the group composition panel
+        api.get<{ teams: LiveSessionTeam[]; participants: ParticipantResult[] }>(
+          `/live-sessions/${sessionId}/results`
+        ).then((r) => {
+          if (r.data.participants.length) setParticipants(r.data.participants);
+        }).catch(() => {});
+      }
     } catch {
       //
     } finally {
@@ -430,13 +438,14 @@ export default function LiveSessionControlPage() {
         </Card>
       )}
 
-      {/* Leaderboard (vertical medal list) */}
+      {/* Unified leaderboard + team composition */}
       {sortedTeams.length > 0 && (
         <div className="mb-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-3">Natijalar jadvali</h2>
+          <h2 className="text-lg font-semibold text-gray-900 mb-3">Guruhlar</h2>
           <div className="space-y-2">
             {sortedTeams.map((team, idx) => {
               const medal = idx === 0 ? "🏆" : idx === 1 ? "🥈" : idx === 2 ? "🥉" : null;
+              const members = participants.filter((p) => p.team_id === team.id);
               return (
                 <motion.div
                   key={team.id}
@@ -445,53 +454,33 @@ export default function LiveSessionControlPage() {
                   transition={{ delay: idx * 0.05 }}
                 >
                   <Card className="bg-white border-gray-200 shadow-sm" style={{ borderLeftColor: team.color, borderLeftWidth: 4 }}>
-                    <CardContent className="py-3 flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        {medal
-                          ? <span className="text-2xl w-9 text-center">{medal}</span>
-                          : <span className="text-sm font-bold text-gray-400 w-9 text-center">#{idx + 1}</span>
-                        }
-                        <span className="font-semibold text-gray-800">{team.name}</span>
+                    <CardContent className="py-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          {medal
+                            ? <span className="text-2xl w-9 text-center">{medal}</span>
+                            : <span className="text-sm font-bold text-gray-400 w-9 text-center">#{idx + 1}</span>
+                          }
+                          <span className="font-semibold text-gray-800">{team.name}</span>
+                        </div>
+                        <span className="text-2xl font-bold text-gray-900">{team.score}</span>
                       </div>
-                      <span className="text-2xl font-bold text-gray-900">{team.score}</span>
+                      {members.length > 0 && (
+                        <div className="mt-2 space-y-0.5 pl-12">
+                          {members.map((m) => (
+                            <div key={m.student_id} className="flex justify-between text-sm py-0.5">
+                              <span className="text-gray-600 flex items-center gap-1">
+                                {m.is_mvp && <Star className="h-3 w-3 text-yellow-500 shrink-0" />}
+                                · {m.student_name}
+                              </span>
+                              <span className="text-gray-400">{m.personal_score} ball</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </CardContent>
                   </Card>
                 </motion.div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Team member composition (shown after session ends) */}
-      {sessionEnded && participants.length > 0 && sortedTeams.length > 0 && (
-        <div className="mb-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-3">Jamoa a&apos;zolari</h2>
-          <div className="space-y-3">
-            {sortedTeams.map((team) => {
-              const members = participants.filter((p) => p.team_id === team.id);
-              return (
-                <Card key={team.id} className="bg-white border-gray-200 shadow-sm" style={{ borderLeftColor: team.color, borderLeftWidth: 4 }}>
-                  <CardContent className="py-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <div className="h-3 w-3 rounded-full shrink-0" style={{ backgroundColor: team.color }} />
-                      <h3 className="font-semibold text-sm text-gray-800">{team.name}</h3>
-                      <span className="text-sm text-gray-400 ml-auto">{team.score} ball</span>
-                    </div>
-                    {members.map((m) => (
-                      <div key={m.student_id} className="flex justify-between text-sm py-0.5 pl-5">
-                        <span className="text-gray-700 flex items-center gap-1">
-                          {m.is_mvp && <Star className="h-3 w-3 text-yellow-500 shrink-0" />}
-                          {m.student_name}
-                        </span>
-                        <span className="text-gray-400">{m.personal_score} ball</span>
-                      </div>
-                    ))}
-                    {members.length === 0 && (
-                      <p className="text-xs text-gray-400 pl-5">A&apos;zolar ma&apos;lumoti yo&apos;q</p>
-                    )}
-                  </CardContent>
-                </Card>
               );
             })}
           </div>
