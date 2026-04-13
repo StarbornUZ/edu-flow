@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -18,7 +18,7 @@ import { useAuthStore, roleRoutes } from "@/stores/auth.store";
 import type { AuthResponse } from "@/types";
 
 const loginSchema = z.object({
-  email: z.string().email("Email formati noto'g'ri"),
+  email: z.string().min(1, "Email yoki username kiritilishi shart"),
   password: z.string().min(1, "Parol kiritilishi shart"),
 });
 
@@ -27,7 +27,15 @@ type LoginForm = z.infer<typeof loginSchema>;
 export default function LoginPage() {
   const router = useRouter();
   const setAuth = useAuthStore((s) => s.setAuth);
+  const storeUser = useAuthStore((s) => s.user);
   const [error, setError] = useState<string | null>(null);
+
+  // Allaqachon tizimga kirgan foydalanuvchini dashboard ga yo'naltirish
+  useEffect(() => {
+    if (storeUser) {
+      router.replace(roleRoutes[storeUser.role] || "/");
+    }
+  }, [storeUser, router]);
 
   const {
     register,
@@ -87,11 +95,11 @@ export default function LoginPage() {
             )}
 
             <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
+              <Label htmlFor="email">Email yoki username</Label>
               <Input
                 id="email"
-                type="email"
-                placeholder="email@example.com"
+                type="text"
+                placeholder="email@example.com yoki username"
                 {...register("email")}
               />
               {errors.email && (
