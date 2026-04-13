@@ -324,7 +324,7 @@ async def assign_teams(
     current_user: User = Depends(require_teacher),
     db: AsyncSession = Depends(get_db),
 ):
-    """Group battle uchun guruhlarni tuzish (o'qituvchi tugmasi bosilganda)."""
+    """Group battle uchun guruhlarni tuzish — faqat ulangan o'quvchilardan."""
     session = await db.get(LiveSession, session_id)
     if not session:
         raise HTTPException(404, "Sessiya topilmadi")
@@ -340,21 +340,41 @@ async def assign_teams(
     if existing_teams:
         raise HTTPException(400, "Guruhlar allaqachon belgilangan")
 
-    class_ids = [uuid.UUID(cid) for cid in (session.class_ids or [])]
-    if not class_ids:
-        raise HTTPException(400, "Sinf tanlanmagan")
+    # Ulangan o'quvchilarni aniqlaymiz (o'qituvchilarni chiqarib tashlash)
+    connected_all = set(manager.rooms.get(str(session_id), {}).keys())
+    teachers = manager.teacher_rooms.get(str(session_id), set())
+    connected_student_ids = [uuid.UUID(uid) for uid in (connected_all - teachers)]
 
-    group_count = int(session.config.get("group_count", 2))
+    if not connected_student_ids:
+        raise HTTPException(400, "Hali o'quvchilar ulanmagan")
+
+    group_count = max(2, min(int(session.config.get("group_count", 2)), len(connected_student_ids)))
     grouping_method = str(session.config.get("grouping_method", "random"))
 
-    await _assign_group_battle_teams(session, class_ids[0], group_count, grouping_method, db)
+    await _assign_connected_students_to_teams(session, connected_student_ids, group_count, grouping_method, db)
     await db.commit()
 
+    # Har bir o'quvchiga team_assigned yuborish
+    parts_result = await db.execute(
+        select(LiveSessionParticipant).where(LiveSessionParticipant.session_id == session_id)
+    )
     teams_result = await db.execute(
         select(LiveSessionTeam).where(LiveSessionTeam.session_id == session_id)
     )
-    teams = teams_result.scalars().all()
-    return {"teams": [{"id": str(t.id), "name": t.name, "color": t.color} for t in teams]}
+    teams_list = teams_result.scalars().all()
+    team_map = {str(t.id): t for t in teams_list}
+
+    for part in parts_result.scalars().all():
+        team = team_map.get(str(part.team_id))
+        if team:
+            await manager.send_to(str(session_id), str(part.student_id), {
+                "type": "team_assigned",
+                "team_id": str(team.id),
+                "team_name": team.name,
+                "team_color": team.color,
+            })
+
+    return {"teams": [{"id": str(t.id), "name": t.name, "color": t.color} for t in teams_list]}
 
 
 # ─── POST /live-sessions/{id}/start ─────────────────────────────────────────
@@ -830,7 +850,7 @@ async def _process_answer(
     # XP mukofoti: to'g'ri javob uchun
     if is_correct:
         if session.game_type == GameType.blitz:
-            xp = max(1, score // 10)   # Dinamik: tezroq = ko'proq XP
+            xp = max(1, score // 20)   # Dinamik: tezroq = ko'proq XP
         else:
             xp = 10                    # Statik: boshqa o'yinlar uchun
         await GamificationService(db).award_xp_live(uuid.UUID(user_id), xp)
@@ -894,23 +914,15 @@ async def _collect_group_battle_students(
     return [row[0] for row in enrollments_result.all()]
 
 
-async def _assign_group_battle_teams(
+async def _assign_connected_students_to_teams(
     session: LiveSession,
-    class_id: uuid.UUID,
+    student_ids: list[uuid.UUID],
     group_count: int,
     grouping_method: str,
     db: AsyncSession,
 ) -> None:
-    """Group battle: sinfni guruh_count ta guruhga bo'ladi (snake-draft)."""
-    group_count = max(2, min(group_count, 8))
-
-    enrollments_result = await db.execute(
-        select(ClassEnrollment).where(
-            ClassEnrollment.class_id == class_id,
-            ClassEnrollment.status == ClassEnrollmentStatus.active,
-        )
-    )
-    student_ids = [e.student_id for e in enrollments_result.scalars().all()]
+    """Ulangan o'quvchilarni guruhga bo'lish (snake-draft)."""
+    group_count = max(2, min(group_count, len(student_ids)))
 
     if grouping_method == "ai" and student_ids:
         student_scores: dict[uuid.UUID, float] = {}
