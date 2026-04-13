@@ -28,7 +28,10 @@ ALLOWED_ORIGINS = os.getenv(
 # Lokal tarmoq (192.168.x.x) dan istalgan portga brauzer kirishiga ruxsat
 ALLOW_LOCAL_NETWORK = os.getenv("ALLOW_LOCAL_NETWORK", "true").lower() == "true"
 
-LOCAL_NETWORK_REGEX = r"http://(localhost|127\.0\.0\.1)(:\d+)?|http://192\.168\.\d{1,3}\.\d{1,3}(:\d+)?"
+LOCAL_NETWORK_REGEX = (
+    r"http://(localhost|127\.0\.0\.1)(:\d+)?"
+    r"|http://(192\.168|10\.\d{1,3}|172\.(1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}(:\d+)?"
+)
 
 app.add_middleware(
     CORSMiddleware,

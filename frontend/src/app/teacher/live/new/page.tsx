@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Zap, Dice3, Link2, Plus, Trash2, Sparkles, Loader2,
-  Users, Trophy, ChevronRight, ChevronLeft, Brain, Shuffle,
+  Users, Trophy, ChevronRight, ChevronLeft, Brain, Shuffle, CheckCircle2,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { api } from "@/lib/api";
@@ -20,7 +20,6 @@ import {
   Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Checkbox } from "@/components/ui/checkbox";
 import AIGenerateModal from "@/components/teacher/AIGenerateModal";
 
 interface LiveQuestion {
@@ -221,11 +220,9 @@ export default function NewLiveSessionPage() {
                         }`}
                         onClick={() => toggleClass(cls.id)}
                       >
-                        <Checkbox
-                          checked={selected}
-                          onCheckedChange={() => toggleClass(cls.id)}
-                          className="pointer-events-none"
-                        />
+                        <div className={`h-5 w-5 rounded border-2 flex items-center justify-center shrink-0 ${selected ? "border-primary bg-primary" : "border-muted-foreground/40"}`}>
+                          {selected && <CheckCircle2 className="h-3.5 w-3.5 text-white" />}
+                        </div>
                         <div className="flex-1 min-w-0">
                           <p className="font-medium text-sm">{cls.name}</p>
                           <p className="text-xs text-muted-foreground">{cls.academic_year}</p>
