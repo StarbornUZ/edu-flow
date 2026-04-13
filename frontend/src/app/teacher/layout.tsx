@@ -24,7 +24,7 @@ const sidebarItems = [
   },
   {
     label: "Jonli dars",
-    href: "/teacher/live/new",
+    href: "/teacher/live",
     icon: <Radio className="h-4 w-4" />,
   },
 ];

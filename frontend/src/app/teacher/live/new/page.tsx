@@ -247,11 +247,12 @@ export default function NewLiveSessionPage() {
                 <div className="space-y-2">
                   <Label>Guruhlar soni</Label>
                   <div className="flex gap-2">
-                    {[2, 3, 4].map((n) => (
+                    {([2, 3, 4] as const).map((n) => (
                       <Button
                         key={n}
                         variant={groupCount === n ? "default" : "outline"}
                         size="sm"
+                        disabled={n === 3 || n === 4}
                         onClick={() => setGroupCount(n)}
                       >
                         {n} guruh

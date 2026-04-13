@@ -198,6 +198,24 @@ class GamificationService:
         return badge_type
 
     # ------------------------------------------------------------------
+    # Live session uchun XP (streak yangilanmaydi, badge tekshiriladi)
+    # ------------------------------------------------------------------
+
+    async def award_xp_live(self, student_id: uuid.UUID, xp_amount: int) -> None:
+        """Jonli dars savoli uchun XP berish. Streak yangilanmaydi."""
+        if xp_amount <= 0:
+            return
+        user: User | None = await self.db.get(User, student_id)
+        if not user:
+            return
+        old_level = int(user.level)
+        user.xp = int(user.xp) + xp_amount
+        user.level = calculate_level(int(user.xp))
+        if user.level > old_level:
+            await self._check_level_badge(user, user.level)
+        await self.db.commit()
+
+    # ------------------------------------------------------------------
     # Alohida metod: faqat XP qo'shish (teacher confirm dan keyin)
     # ------------------------------------------------------------------
 

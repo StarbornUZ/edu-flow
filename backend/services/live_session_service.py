@@ -11,6 +11,8 @@ class ConnectionManager:
     def __init__(self):
         # session_id → {user_id: WebSocket}
         self.rooms: dict[str, dict[str, WebSocket]] = defaultdict(dict)
+        # session_id → set of teacher user_ids (excluded from student count)
+        self.teacher_rooms: dict[str, set[str]] = defaultdict(set)
 
     async def connect(self, session_id: str, user_id: str, ws: WebSocket):
         await ws.accept()
@@ -20,6 +22,20 @@ class ConnectionManager:
         self.rooms[session_id].pop(user_id, None)
         if not self.rooms.get(session_id):
             self.rooms.pop(session_id, None)
+        self.teacher_rooms.get(session_id, set()).discard(user_id)
+
+    def register_teacher(self, session_id: str, user_id: str) -> None:
+        """O'qituvchini alohida ro'yxatga kiritish (hisobdan chiqarish uchun)."""
+        self.teacher_rooms[session_id].add(user_id)
+
+    def get_student_count(self, session_id: str) -> int:
+        """Faqat o'quvchilar sonini qaytaradi (o'qituvchisiz)."""
+        all_users = set(self.rooms.get(session_id, {}).keys())
+        teachers = self.teacher_rooms.get(session_id, set())
+        return len(all_users - teachers)
+
+    def get_connected_count(self, session_id: str) -> int:
+        return len(self.rooms.get(session_id, {}))
 
     async def send_to(self, session_id: str, user_id: str, data: dict):
         """Bitta foydalanuvchiga yuborish."""
@@ -35,9 +51,6 @@ class ConnectionManager:
                     await ws.send_json(data)
                 except Exception:
                     pass
-
-    def get_connected_count(self, session_id: str) -> int:
-        return len(self.rooms.get(session_id, {}))
 
 
 # Global instance
@@ -66,11 +79,11 @@ class GameEngine:
 
     @staticmethod
     def calculate_lucky_card_score(card_type: str, is_correct: bool = False) -> int:
-        """Omad Sinovi."""
+        """Omad Sinovi: omad karta → 150 ball, savol karta → 100 ball (to'g'ri javob)."""
         if card_type == "lucky":
-            return 10
+            return 150
         elif card_type == "question" and is_correct:
-            return 10
+            return 100
         return 0
 
     @staticmethod
