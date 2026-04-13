@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import { BASE_URL } from "@/lib/api";
 import {
   Dialog,
   DialogContent,
@@ -38,7 +39,7 @@ export default function AIGenerateModal({
 
     try {
       const response = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}${endpoint}`,
+        `${BASE_URL}${endpoint}`,
         {
           method: "POST",
           headers: {

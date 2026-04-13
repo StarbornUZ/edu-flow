@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import {
@@ -10,9 +10,14 @@ import {
   Loader2,
   FileText,
   CheckCircle,
+  Trash2,
+  School,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { api } from "@/lib/api";
+import { useAuthStore } from "@/stores/auth.store";
 import type { Course, CourseModule, Class } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -56,47 +61,91 @@ const statusLabels: Record<string, string> = {
 export default function CourseDetailPage() {
   const params = useParams();
   const courseId = params.id as string;
+  const queryClient = useQueryClient();
+  const user = useAuthStore((s) => s.user);
 
-  const [course, setCourse] = useState<Course | null>(null);
-  const [modules, setModules] = useState<CourseModule[]>([]);
-  const [classes, setClasses] = useState<Class[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [expandedModules, setExpandedModules] = useState<Set<string>>(
-    new Set()
-  );
+  const [expandedModules, setExpandedModules] = useState<Set<string>>(new Set());
 
   // Add module dialog
   const [moduleDialogOpen, setModuleDialogOpen] = useState(false);
   const [newModuleTitle, setNewModuleTitle] = useState("");
-  const [addingModule, setAddingModule] = useState(false);
 
-  // Assign class
+  // Assign class dialog
+  const [assignDialogOpen, setAssignDialogOpen] = useState(false);
   const [selectedClassId, setSelectedClassId] = useState("");
-  const [assigningClass, setAssigningClass] = useState(false);
 
-  // Publishing
-  const [publishing, setPublishing] = useState(false);
+  // ── Queries ──────────────────────────────────────────────────────────
+  const { data: course, isLoading: courseLoading } = useQuery<Course>({
+    queryKey: ["course", courseId],
+    queryFn: () => api.get<Course>(`/courses/${courseId}`).then((r) => r.data),
+    enabled: !!courseId,
+  });
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const [courseRes, modulesRes, classesRes] = await Promise.all([
-          api.get<Course>(`/courses/${courseId}`),
-          api.get<CourseModule[]>(`/courses/${courseId}/modules`),
-          api.get<Class[]>("/classes/"),
-        ]);
-        setCourse(courseRes.data);
-        setModules(modulesRes.data);
-        setClasses(classesRes.data);
-      } catch {
-        // handle error
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchData();
-  }, [courseId]);
+  const { data: modules = [], isLoading: modulesLoading } = useQuery<CourseModule[]>({
+    queryKey: ["course-modules", courseId],
+    queryFn: () => api.get<CourseModule[]>(`/courses/${courseId}/modules`).then((r) => r.data),
+    enabled: !!courseId,
+  });
 
+  // All classes teacher can assign (teacher's own classes)
+  const { data: allClasses = [] } = useQuery<Class[]>({
+    queryKey: ["teacher-classes"],
+    queryFn: () => api.get<Class[]>("/classes/").then((r) => r.data),
+    enabled: !!user,
+  });
+
+  // Classes already assigned to this course
+  const { data: assignedClasses = [], isLoading: assignedLoading } = useQuery<Class[]>({
+    queryKey: ["course-classes", courseId],
+    queryFn: () => api.get<Class[]>(`/courses/${courseId}/classes`).then((r) => r.data),
+    enabled: !!courseId,
+  });
+
+  // ── Mutations ─────────────────────────────────────────────────────────
+  const publishMutation = useMutation({
+    mutationFn: () => api.post(`/courses/${courseId}/publish`),
+    onSuccess: () => {
+      toast.success("Kurs nashr etildi");
+      queryClient.invalidateQueries({ queryKey: ["course", courseId] });
+    },
+    onError: () => toast.error("Nashr etishda xatolik"),
+  });
+
+  const addModuleMutation = useMutation({
+    mutationFn: () =>
+      api.post<CourseModule>(`/courses/${courseId}/modules`, { title: newModuleTitle }),
+    onSuccess: () => {
+      toast.success("Modul qo'shildi");
+      queryClient.invalidateQueries({ queryKey: ["course-modules", courseId] });
+      setNewModuleTitle("");
+      setModuleDialogOpen(false);
+    },
+    onError: () => toast.error("Modul qo'shishda xatolik"),
+  });
+
+  const assignClassMutation = useMutation({
+    mutationFn: (classId: string) =>
+      api.post(`/classes/${classId}/enroll`, { course_id: courseId }),
+    onSuccess: () => {
+      toast.success("Sinf kursga biriktirildi");
+      queryClient.invalidateQueries({ queryKey: ["course-classes", courseId] });
+      setSelectedClassId("");
+      setAssignDialogOpen(false);
+    },
+    onError: () => toast.error("Biriktrishda xatolik. Sinf allaqachon biriktirilgan bo'lishi mumkin."),
+  });
+
+  const removeClassMutation = useMutation({
+    mutationFn: (classId: string) =>
+      api.delete(`/courses/${courseId}/classes/${classId}`),
+    onSuccess: () => {
+      toast.success("Sinf kursdan olib tashlandi");
+      queryClient.invalidateQueries({ queryKey: ["course-classes", courseId] });
+    },
+    onError: () => toast.error("Olib tashlashda xatolik"),
+  });
+
+  // ── Helpers ───────────────────────────────────────────────────────────
   const toggleModule = (moduleId: string) => {
     setExpandedModules((prev) => {
       const next = new Set(prev);
@@ -106,49 +155,13 @@ export default function CourseDetailPage() {
     });
   };
 
-  const handlePublish = async () => {
-    setPublishing(true);
-    try {
-      await api.post(`/courses/${courseId}/publish`);
-      setCourse((prev) => (prev ? { ...prev, status: "published" } : prev));
-    } catch {
-      // handle error
-    } finally {
-      setPublishing(false);
-    }
-  };
+  // Classes not yet assigned to this course
+  const assignedIds = new Set(assignedClasses.map((c) => c.id));
+  const availableClasses = allClasses.filter((c) => !assignedIds.has(c.id));
 
-  const handleAddModule = async () => {
-    if (!newModuleTitle) return;
-    setAddingModule(true);
-    try {
-      const res = await api.post<CourseModule>(`/courses/${courseId}/modules`, {
-        title: newModuleTitle,
-      });
-      setModules((prev) => [...prev, res.data]);
-      setNewModuleTitle("");
-      setModuleDialogOpen(false);
-    } catch {
-      // handle error
-    } finally {
-      setAddingModule(false);
-    }
-  };
+  const isLoading = courseLoading || modulesLoading;
 
-  const handleAssignClass = async () => {
-    if (!selectedClassId) return;
-    setAssigningClass(true);
-    try {
-      await api.post(`/classes/${selectedClassId}/enroll`, { course_id: courseId });
-      setSelectedClassId("");
-    } catch {
-      // handle error
-    } finally {
-      setAssigningClass(false);
-    }
-  };
-
-  if (loading) {
+  if (isLoading) {
     return (
       <div className="space-y-6 max-w-4xl mx-auto">
         <Skeleton className="h-8 w-64" />
@@ -184,8 +197,11 @@ export default function CourseDetailPage() {
               </CardDescription>
             </div>
             {course.status === "draft" && (
-              <Button onClick={handlePublish} disabled={publishing}>
-                {publishing && (
+              <Button
+                onClick={() => publishMutation.mutate()}
+                disabled={publishMutation.isPending}
+              >
+                {publishMutation.isPending && (
                   <Loader2 className="h-4 w-4 animate-spin mr-2" />
                 )}
                 <CheckCircle className="h-4 w-4 mr-2" />
@@ -237,14 +253,17 @@ export default function CourseDetailPage() {
                     placeholder="Masalan: 1-modul: Kirish"
                     value={newModuleTitle}
                     onChange={(e) => setNewModuleTitle(e.target.value)}
+                    onKeyDown={(e) =>
+                      e.key === "Enter" && !addModuleMutation.isPending && newModuleTitle && addModuleMutation.mutate()
+                    }
                   />
                 </div>
                 <Button
-                  onClick={handleAddModule}
-                  disabled={addingModule || !newModuleTitle}
+                  onClick={() => addModuleMutation.mutate()}
+                  disabled={addModuleMutation.isPending || !newModuleTitle}
                   className="w-full"
                 >
-                  {addingModule && (
+                  {addModuleMutation.isPending && (
                     <Loader2 className="h-4 w-4 animate-spin mr-2" />
                   )}
                   Qo&apos;shish
@@ -262,7 +281,7 @@ export default function CourseDetailPage() {
           </Card>
         ) : (
           <div className="space-y-2">
-            {modules
+            {[...modules]
               .sort((a, b) => a.order_number - b.order_number)
               .map((mod) => (
                 <Card key={mod.id}>
@@ -308,38 +327,105 @@ export default function CourseDetailPage() {
         )}
       </div>
 
-      {/* Assign Class */}
+      {/* Assigned Classes */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg">Sinf biriktirish</CardTitle>
-          <CardDescription>
-            Kursni sinflarga biriktiring
-          </CardDescription>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-lg">Biriktirilgan sinflar</CardTitle>
+              <CardDescription>
+                Bu kursni o&apos;qiyotgan sinflar
+              </CardDescription>
+            </div>
+            <Dialog open={assignDialogOpen} onOpenChange={(v) => { setAssignDialogOpen(v); setSelectedClassId(""); }}>
+              <DialogTrigger asChild>
+                <Button variant="outline" size="sm" disabled={availableClasses.length === 0 && !assignedLoading}>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Sinf biriktirish
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-md">
+                <DialogHeader>
+                  <DialogTitle>Kursga sinf biriktirish</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4 pt-2">
+                  {availableClasses.length === 0 ? (
+                    <p className="text-sm text-muted-foreground text-center py-4">
+                      Barcha sinflar allaqachon biriktirilgan
+                    </p>
+                  ) : (
+                    <>
+                      <div className="space-y-1">
+                        <Label>Sinf tanlang</Label>
+                        <Select value={selectedClassId} onValueChange={setSelectedClassId}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Sinf tanlang" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {availableClasses.map((cls) => (
+                              <SelectItem key={cls.id} value={cls.id}>
+                                {cls.name}
+                                {cls.academic_year ? ` (${cls.academic_year})` : ""}
+                                {cls.grade_level ? ` — ${cls.grade_level}-sinf` : ""}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <Button
+                        className="w-full"
+                        onClick={() => assignClassMutation.mutate(selectedClassId)}
+                        disabled={assignClassMutation.isPending || !selectedClassId}
+                      >
+                        {assignClassMutation.isPending && (
+                          <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                        )}
+                        Biriktirish
+                      </Button>
+                    </>
+                  )}
+                </div>
+              </DialogContent>
+            </Dialog>
+          </div>
         </CardHeader>
         <CardContent>
-          <div className="flex gap-2">
-            <Select value={selectedClassId} onValueChange={setSelectedClassId}>
-              <SelectTrigger className="flex-1">
-                <SelectValue placeholder="Sinf tanlang" />
-              </SelectTrigger>
-              <SelectContent>
-                {classes.map((cls) => (
-                  <SelectItem key={cls.id} value={cls.id}>
-                    {cls.name} - {cls.subject}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Button
-              onClick={handleAssignClass}
-              disabled={assigningClass || !selectedClassId}
-            >
-              {assigningClass && (
-                <Loader2 className="h-4 w-4 animate-spin mr-2" />
-              )}
-              Biriktirish
-            </Button>
-          </div>
+          {assignedLoading ? (
+            <div className="space-y-2">
+              {[1, 2].map((i) => <Skeleton key={i} className="h-10 w-full" />)}
+            </div>
+          ) : assignedClasses.length === 0 ? (
+            <div className="text-center py-6 text-muted-foreground">
+              <School className="h-8 w-8 mx-auto mb-2 opacity-50" />
+              <p className="text-sm">Hali sinf biriktirilmagan</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {assignedClasses.map((cls) => (
+                <div
+                  key={cls.id}
+                  className="flex items-center justify-between rounded-lg border px-3 py-2"
+                >
+                  <div>
+                    <p className="font-medium text-sm">{cls.name}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {cls.academic_year}
+                      {cls.grade_level ? ` · ${cls.grade_level}-sinf` : ""}
+                    </p>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 text-destructive hover:text-destructive"
+                    onClick={() => removeClassMutation.mutate(cls.id)}
+                    disabled={removeClassMutation.isPending}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>
