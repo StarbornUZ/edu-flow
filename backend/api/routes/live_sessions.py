@@ -69,7 +69,7 @@ class SessionResponse(BaseModel):
     current_question_index: int = 0
     teacher_name: str | None = None
     my_score: int | None = None
-    created_at: str | None = None
+    created_at: object | None = None
     model_config = {"from_attributes": True}
 
 
