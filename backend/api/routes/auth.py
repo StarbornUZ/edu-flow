@@ -150,4 +150,5 @@ async def change_password(
         raise _http_error("Joriy parol noto'g'ri", status.HTTP_400_BAD_REQUEST)
 
     repo = UserRepository(db)
-    await repo.update(user, password_hash=hash_password(data.new_password))
+    # system_password ni NULL qilamiz — foydalanuvchi o'zi o'zgartirdi
+    await repo.update(user, password_hash=hash_password(data.new_password), system_password=None)

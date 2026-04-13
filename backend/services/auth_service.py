@@ -31,11 +31,11 @@ class AuthService:
         return user, tokens
 
     async def login(self, email: str, password: str) -> tuple[User, tuple[str, str]]:
-        user = await self.users_repo.get_by_email(email)
+        user = await self.users_repo.get_by_email_or_username(email)
         if not user:
-            # Timing attack oldini olish uchun dummy hashing (email topilmasa ham)
+            # Timing attack oldini olish uchun dummy hashing
             hash_password("dummy_password_to_prevent_timing_attack")
-            raise ValueError("Email yoki parol noto'g'ri")
+            raise ValueError("Email, username yoki parol noto'g'ri")
 
         # FIX: verify_password(plain, hashed) — plain ni hash qilmaydi
         if not verify_password(password, user.password_hash):
