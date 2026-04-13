@@ -423,17 +423,27 @@ async def end_session(
     )
     await db.commit()
 
+    # MVP uchun ism va jamoa nomini olish
+    mvp_data = None
+    if participants_list:
+        mvp_participant = participants_list[0]
+        mvp_user = await db.get(User, mvp_participant.student_id)
+        mvp_team = await db.get(LiveSessionTeam, mvp_participant.team_id) if mvp_participant.team_id else None
+        mvp_data = {
+            "student_id": str(mvp_participant.student_id),
+            "student_name": mvp_user.full_name if mvp_user else str(mvp_participant.student_id),
+            "team_name": mvp_team.name if mvp_team else None,
+            "score": mvp_participant.personal_score,
+        }
+
     results = {
         "type": "session_ended",
         "winner_team": teams_list[0].name if teams_list else None,
         "teams": [
-            {"name": t.name, "score": t.score, "color": t.color}
+            {"id": str(t.id), "name": t.name, "score": t.score, "color": t.color}
             for t in teams_list
         ],
-        "mvp": {
-            "student_id": str(participants_list[0].student_id),
-            "score": participants_list[0].personal_score,
-        } if participants_list else None,
+        "mvp": mvp_data,
     }
 
     await manager.broadcast(str(session_id), results)
@@ -515,6 +525,27 @@ async def websocket_endpoint(
             "user_id": user_id,
             "connected_count": manager.get_connected_count(session_id),
         })
+
+        # Talabaning guruh ma'lumotini shaxsiy xabar sifatida yuborish
+        try:
+            part_result = await db.execute(
+                select(LiveSessionParticipant).where(
+                    LiveSessionParticipant.session_id == uuid.UUID(session_id),
+                    LiveSessionParticipant.student_id == uuid.UUID(user_id),
+                )
+            )
+            existing_participant = part_result.scalar_one_or_none()
+            if existing_participant and existing_participant.team_id:
+                team = await db.get(LiveSessionTeam, existing_participant.team_id)
+                if team:
+                    await manager.send_to(session_id, user_id, {
+                        "type": "team_assigned",
+                        "team_id": str(team.id),
+                        "team_name": team.name,
+                        "team_color": team.color,
+                    })
+        except Exception:
+            pass
 
         while True:
             data = await ws.receive_json()
@@ -641,7 +672,7 @@ async def _process_answer(
     await manager.broadcast(session_id, {
         "type": "leaderboard_update",
         "teams": [
-            {"name": t.name, "score": t.score, "color": t.color}
+            {"id": str(t.id), "name": t.name, "score": t.score, "color": t.color}
             for t in teams_result.scalars().all()
         ],
     })
