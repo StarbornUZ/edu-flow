@@ -242,10 +242,24 @@ export interface LiveSession {
   teacher_id: string;
   course_id: string | null;
   game_type: GameType;
+  session_type: "class_battle" | "group_battle";
+  class_ids: string[];
   status: SessionStatus;
   config: Record<string, unknown>;
   questions: Record<string, unknown>[];
   current_question_index: number;
+  teacher_name?: string | null;
+  my_score?: number | null;
+}
+
+export interface Notification {
+  id: string;
+  type: string;
+  title: string;
+  body: string | null;
+  data: Record<string, unknown>;
+  is_read: boolean;
+  created_at: string;
 }
 
 export interface LiveSessionTeam {

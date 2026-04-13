@@ -1,6 +1,6 @@
 "use client";
 
-import { LayoutDashboard, BookOpen, User } from "lucide-react";
+import { LayoutDashboard, BookOpen, User, Swords } from "lucide-react";
 import RoleGuard from "@/components/shared/RoleGuard";
 import Navbar from "@/components/shared/Navbar";
 import OrgGate from "@/components/shared/OrgGate";
@@ -16,6 +16,11 @@ const sidebarItems = [
     label: "Kurslar",
     href: "/student/courses",
     icon: <BookOpen className="h-4 w-4" />,
+  },
+  {
+    label: "Jonli darslar",
+    href: "/student/live",
+    icon: <Swords className="h-4 w-4" />,
   },
   {
     label: "Profil",
