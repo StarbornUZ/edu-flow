@@ -250,6 +250,7 @@ export interface LiveSession {
   current_question_index: number;
   teacher_name?: string | null;
   my_score?: number | null;
+  created_at?: string | null;
 }
 
 export interface Notification {
