@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { useQuery } from "@tanstack/react-query";
 import { Flame, Star, Trophy, BookOpen } from "lucide-react";
 import { motion } from "framer-motion";
@@ -194,11 +195,16 @@ export default function StudentDashboardPage() {
                         <span>{course.completed_modules} modul</span>
                       </div>
                       {course.cover_url && (
-                        <img
-                          src={course.cover_url}
-                          alt={course.title}
-                          className="w-full h-32 object-cover rounded-md mt-2"
-                        />
+                        <div className="relative w-full h-32 mt-2">
+                          <Image
+                            src={course.cover_url}
+                            alt={course.title}
+                            fill
+                            className="object-cover rounded-md"
+                            sizes="(max-width: 768px) 100vw, 33vw"
+                            loading="lazy"
+                          />
+                        </div>
                       )}
                     </CardContent>
                   </Card>

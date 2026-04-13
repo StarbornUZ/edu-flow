@@ -39,40 +39,23 @@ export default function StudentTopicPage() {
   const courseId = params.id as string;
   const topicId = params.topicId as string;
 
-  // Fetch course modules first to find which module contains this topic
-  const { data: modules, isLoading: modulesLoading } = useQuery({
-    queryKey: ["course-modules", courseId],
+  // Mavzuni bevosita olish (modul hierarchy orqali emas)
+  const { data: topic, isLoading: topicLoading } = useQuery<Topic>({
+    queryKey: ["topic", courseId, topicId],
     queryFn: () =>
-      api.get<{ id: string; title: string; order_number: number }[]>(`/courses/${courseId}/modules`).then((res) => res.data),
-    enabled: !!courseId,
+      api.get<Topic>(`/courses/${courseId}/topics/${topicId}`).then((res) => res.data),
+    enabled: !!courseId && !!topicId,
   });
 
-  // Fetch topics for all modules in parallel to find this topic
-  const { data: allModuleTopics, isLoading: topicLoading } = useQuery<{ moduleId: string; topics: Topic[] }[]>({
-    queryKey: ["course-all-topics", courseId, modules?.map((m) => m.id).join(",")],
-    queryFn: async () => {
-      if (!modules || modules.length === 0) return [];
-      const results = await Promise.all(
-        modules.map(async (mod) => {
-          const res = await api.get<Topic[]>(`/modules/${mod.id}/topics`);
-          return { moduleId: mod.id, topics: res.data };
-        })
-      );
-      return results;
-    },
-    enabled: !!modules && modules.length > 0,
+  // Bir xil moduldan prev/next navigatsiya uchun birodash mavzular
+  const { data: siblingTopics, isLoading: siblingsLoading } = useQuery<Topic[]>({
+    queryKey: ["module-topics", topic?.module_id],
+    queryFn: () =>
+      api.get<Topic[]>(`/modules/${topic!.module_id}/topics`).then((res) => res.data),
+    enabled: !!topic?.module_id,
   });
 
-  const topic = allModuleTopics
-    ?.flatMap((mt) => mt.topics)
-    .find((t) => t.id === topicId);
-
-  // Sibling topics are those in the same module as the found topic
-  const siblingTopics = allModuleTopics?.find((mt) =>
-    mt.topics.some((t) => t.id === topicId)
-  )?.topics;
-
-  if (modulesLoading || topicLoading) return <TopicSkeleton />;
+  if (topicLoading || siblingsLoading) return <TopicSkeleton />;
 
   if (!topic) {
     return (

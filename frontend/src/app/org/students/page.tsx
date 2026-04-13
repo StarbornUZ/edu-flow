@@ -151,6 +151,10 @@ function CredentialsCard({ member, classes, onClose }: {
   );
 }
 
+function formatDate(d: string) {
+  return new Date(d).toLocaleDateString("uz-UZ", { year: "numeric", month: "short", day: "numeric" });
+}
+
 export default function StudentsPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -228,9 +232,6 @@ export default function StudentsPage() {
     setSelectedClassForExisting("");
     setFullName("");
   };
-
-  const formatDate = (d: string) =>
-    new Date(d).toLocaleDateString("uz-UZ", { year: "numeric", month: "short", day: "numeric" });
 
   if (!orgId) {
     return <div className="text-center py-16 text-muted-foreground">Tashkilot ma&apos;lumotlari yuklanmoqda...</div>;
