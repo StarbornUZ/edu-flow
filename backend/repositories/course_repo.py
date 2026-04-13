@@ -113,8 +113,20 @@ class CourseRepository:
     # Module CRUD
     # ------------------------------------------------------------------
 
-    async def add_module(self, course_id: uuid.UUID, **data) -> CourseModule:
-        module = CourseModule(course_id=course_id, **data)
+    async def add_module(self, course_id: uuid.UUID, title: str, prev_module_id: uuid.UUID | None = None, is_published: bool = False) -> CourseModule:
+        from sqlalchemy import func
+        result = await self.db.execute(
+            select(func.max(CourseModule.order_number)).where(CourseModule.course_id == course_id)
+        )
+        max_order = result.scalar_one_or_none() or 0
+        module = CourseModule(
+            course_id=course_id,
+            title=title,
+            content_md="",
+            order_number=max_order + 1,
+            prev_module_id=prev_module_id,
+            is_published=is_published,
+        )
         self.db.add(module)
         await self.db.commit()
         await self.db.refresh(module)
@@ -143,3 +155,39 @@ class CourseRepository:
     async def delete_module(self, module: CourseModule) -> None:
         await self.db.delete(module)
         await self.db.commit()
+
+    # ------------------------------------------------------------------
+    # Class-Course assignments
+    # ------------------------------------------------------------------
+
+    async def get_classes_for_course(self, course_id: uuid.UUID):
+        """Kursga biriktirilgan sinflar ro'yxati (student_id IS NULL)."""
+        from backend.db.models.class_ import Class
+        result = await self.db.execute(
+            select(Class)
+            .join(CourseEnrollment, CourseEnrollment.class_id == Class.id)
+            .where(
+                CourseEnrollment.course_id == course_id,
+                CourseEnrollment.student_id.is_(None),
+            )
+            .order_by(Class.created_at.desc())
+        )
+        return result.scalars().all()
+
+    async def remove_class_from_course(
+        self, course_id: uuid.UUID, class_id: uuid.UUID
+    ) -> bool:
+        """Kursdan sinfni olib tashlaydi."""
+        result = await self.db.execute(
+            select(CourseEnrollment).where(
+                CourseEnrollment.course_id == course_id,
+                CourseEnrollment.class_id == class_id,
+                CourseEnrollment.student_id.is_(None),
+            )
+        )
+        enrollment = result.scalar_one_or_none()
+        if not enrollment:
+            return False
+        await self.db.delete(enrollment)
+        await self.db.commit()
+        return True

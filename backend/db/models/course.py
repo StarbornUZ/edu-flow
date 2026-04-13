@@ -126,6 +126,8 @@ class CourseModule(Base, TimestampMixin):
     content_md: Mapped[str] = mapped_column(
         Text(),
         nullable=False,
+        default="",
+        server_default="",
     )
 
     order_number: Mapped[int] = mapped_column(

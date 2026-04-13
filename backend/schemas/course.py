@@ -18,13 +18,13 @@ STATUS_VALUES = {"draft", "published", "archived"}
 
 class CourseCreate(BaseModel):
     title: str
-    description: str
-    subject: str
+    description: str = ""
+    subject: str | None = None        # ixtiyoriy: subject_id berilsa, nomni DBdan olamiz
+    subject_id: uuid.UUID | None = None
     difficulty: str = "beginner"
     cover_url: str | None = None
     is_ai_generated: bool = False
     org_id: uuid.UUID | None = None
-    subject_id: uuid.UUID | None = None
 
     @field_validator("difficulty")
     @classmethod
@@ -74,15 +74,12 @@ class CourseResponse(BaseModel):
 
 class ModuleCreate(BaseModel):
     title: str
-    content_md: str
-    order_number: int
     prev_module_id: uuid.UUID | None = None
     is_published: bool = False
 
 
 class ModuleUpdate(BaseModel):
     title: str | None = None
-    content_md: str | None = None
     order_number: int | None = None
     is_published: bool | None = None
 
@@ -93,9 +90,7 @@ class ModuleResponse(BaseModel):
     id: uuid.UUID
     course_id: uuid.UUID
     title: str
-    content_md: str
     order_number: int
-    prev_module_id: uuid.UUID | None
     is_published: bool
     created_at: datetime
     updated_at: datetime
