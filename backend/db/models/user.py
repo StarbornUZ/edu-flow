@@ -60,6 +60,22 @@ class User(Base, TimestampMixin):
         index=True,
     )
 
+    # Tashkilot tomonidan yaratilgan foydalanuvchilar uchun
+    # username: firstname.lastname.1234 formatida
+    username: Mapped[str | None] = mapped_column(
+        String(100),
+        unique=True,
+        nullable=True,
+        index=True,
+    )
+
+    # Tizim tomonidan yaratilgan parol (admin ko'rishi uchun).
+    # Foydalanuvchi o'zi parolni o'zgartirsa NULL bo'ladi.
+    system_password: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+    )
+
     # --- Gamifikatsiya ---
     xp: Mapped[int] = mapped_column(
         default=0,

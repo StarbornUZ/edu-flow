@@ -6,7 +6,6 @@ from pydantic import BaseModel, ConfigDict
 
 class TopicCreate(BaseModel):
     title: str
-    order_index: int = 0
     content_md: str | None = None
     content_latex: str | None = None
     video_url: str | None = None

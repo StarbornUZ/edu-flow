@@ -1,125 +1,345 @@
 "use client";
 
 import { useState } from "react";
-import { Plus, GraduationCap } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Plus, GraduationCap, Search, UserPlus, Eye, EyeOff, RefreshCw, Copy } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth.store";
-import type { User } from "@/types";
+import type { User, Class, CreatedMember } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
+
+function PasswordCell({ userId, orgId }: { userId: string; orgId: string }) {
+  const [show, setShow] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [creds, setCreds] = useState<{ system_password: string | null } | null>(null);
+
+  const load = async () => {
+    if (creds !== null) { setShow((v) => !v); return; }
+    try {
+      const { data } = await api.get<{ system_password: string | null }>(
+        `/organizations/${orgId}/members/${userId}/credentials`
+      );
+      setCreds(data);
+      setShow(true);
+    } catch {
+      toast.error("Ma'lumotni yuklashda xatolik");
+    }
+  };
+
+  const resetPassword = async () => {
+    setResetting(true);
+    try {
+      const { data } = await api.post<{ new_password: string }>(
+        `/organizations/${orgId}/members/${userId}/reset-password`
+      );
+      setCreds({ system_password: data.new_password });
+      setShow(true);
+      toast.success("Parol tiklandi");
+    } catch {
+      toast.error("Parolni tiklashda xatolik");
+    } finally {
+      setResetting(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-1">
+      {show && creds?.system_password ? (
+        <span className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded">{creds.system_password}</span>
+      ) : (
+        <span className="text-xs text-muted-foreground">
+          {creds !== null && creds.system_password === null ? "O'zgartirilgan" : "••••••••"}
+        </span>
+      )}
+      <Button variant="ghost" size="icon" className="h-6 w-6" onClick={load}>
+        {show ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+      </Button>
+      <Button variant="ghost" size="icon" className="h-6 w-6" onClick={resetPassword} disabled={resetting}>
+        <RefreshCw className={`h-3 w-3 ${resetting ? "animate-spin" : ""}`} />
+      </Button>
+    </div>
+  );
+}
+
+function CredentialsCard({ member, classes, onClose }: {
+  member: CreatedMember;
+  classes: Class[];
+  onClose: () => void;
+}) {
+  const [classId, setClassId] = useState("");
+  const [assigning, setAssigning] = useState(false);
+  const copy = (text: string) => { navigator.clipboard.writeText(text); toast.success("Nusxalandi"); };
+
+  const assignToClass = async () => {
+    if (!classId) return;
+    setAssigning(true);
+    try {
+      await api.post(`/classes/${classId}/students`, { student_id: member.id });
+      toast.success("O'quvchi sinfga qo'shildi");
+      setClassId("");
+    } catch {
+      toast.error("Sinfga qo'shishda xatolik");
+    } finally {
+      setAssigning(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-lg border border-green-200 bg-green-50 p-4 space-y-3">
+        <p className="text-sm font-medium text-green-800">O&apos;quvchi muvaffaqiyatli yaratildi!</p>
+        <div className="space-y-2 text-sm">
+          {[
+            { label: "Ism", value: member.full_name },
+            { label: "Username", value: member.username },
+            { label: "Email", value: member.email },
+            { label: "Parol", value: member.generated_password },
+          ].map(({ label, value }) => (
+            <div key={label} className="flex items-center justify-between">
+              <span className="text-muted-foreground">{label}:</span>
+              <div className="flex items-center gap-1">
+                <span className="font-mono text-xs">{value}</span>
+                <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => copy(value)}>
+                  <Copy className="h-3 w-3" />
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
+          Bu ma&apos;lumotlarni saqlang!
+        </p>
+      </div>
+
+      {classes.length > 0 && (
+        <div className="space-y-2">
+          <Label>Sinfga biriktirish (ixtiyoriy)</Label>
+          <div className="flex gap-2">
+            <Select value={classId} onValueChange={setClassId}>
+              <SelectTrigger className="flex-1">
+                <SelectValue placeholder="Sinf tanlang" />
+              </SelectTrigger>
+              <SelectContent>
+                {classes.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <Button variant="secondary" onClick={assignToClass} disabled={assigning || !classId}>
+              {assigning ? "..." : "Qo'shish"}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      <Button className="w-full" onClick={onClose}>Yopish</Button>
+    </div>
+  );
+}
 
 export default function StudentsPage() {
+  const router = useRouter();
   const queryClient = useQueryClient();
   const user = useAuthStore((s) => s.user);
   const orgId = user?.org_id;
   const [open, setOpen] = useState(false);
-  const [userId, setUserId] = useState("");
+  const [createdMember, setCreatedMember] = useState<CreatedMember | null>(null);
 
-  const { data: allMembers, isLoading } = useQuery<User[]>({
-    queryKey: ["org-members", orgId],
+  const [searchEmail, setSearchEmail] = useState("");
+  const [searchResult, setSearchResult] = useState<User | null | "not_found">(null);
+  const [searching, setSearching] = useState(false);
+  const [selectedClassForExisting, setSelectedClassForExisting] = useState("");
+  const [fullName, setFullName] = useState("");
+
+  const { data: students, isLoading } = useQuery<User[]>({
+    queryKey: ["org-students", orgId],
     queryFn: () =>
-      api.get<User[]>(`/organizations/${orgId}/members`).then((r) => r.data),
+      api.get<User[]>(`/organizations/${orgId}/members`).then((r) =>
+        r.data.filter((m) => m.role === "student")
+      ),
     enabled: !!orgId,
   });
 
-  const students = allMembers?.filter((m) => m.role === "student");
-
-  const invite = useMutation({
-    mutationFn: (memberId: string) =>
-      api.post(`/organizations/${orgId}/members`, { user_id: memberId, role_in_org: "student" }),
-    onSuccess: () => {
-      toast.success("O'quvchi muvaffaqiyatli qo'shildi");
-      queryClient.invalidateQueries({ queryKey: ["org-members", orgId] });
-      setUserId("");
-      setOpen(false);
-    },
-    onError: () => {
-      toast.error("Xatolik yuz berdi. Qayta urinib ko'ring.");
-    },
+  const { data: classes = [] } = useQuery<Class[]>({
+    queryKey: ["org-classes"],
+    queryFn: () => api.get<Class[]>("/classes/").then((r) => r.data),
+    enabled: !!orgId,
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!userId.trim()) return;
-    invite.mutate(userId.trim());
+  const addExisting = useMutation({
+    mutationFn: async ({ userId, classId }: { userId: string; classId?: string }) => {
+      await api.post(`/organizations/${orgId}/members`, { user_id: userId, role_in_org: "student" });
+      if (classId) await api.post(`/classes/${classId}/students`, { student_id: userId });
+    },
+    onSuccess: () => {
+      toast.success("O'quvchi muvaffaqiyatli qo'shildi");
+      queryClient.invalidateQueries({ queryKey: ["org-students", orgId] });
+      closeDialog();
+    },
+    onError: () => toast.error("Xatolik yuz berdi"),
+  });
+
+  const createAndAdd = useMutation({
+    mutationFn: (name: string) =>
+      api.post<CreatedMember>(`/organizations/${orgId}/users`, { full_name: name, role_in_org: "student" }),
+    onSuccess: ({ data }) => {
+      queryClient.invalidateQueries({ queryKey: ["org-students", orgId] });
+      setCreatedMember(data);
+      setFullName("");
+    },
+    onError: () => toast.error("O'quvchi yaratishda xatolik"),
+  });
+
+  const handleSearch = async () => {
+    if (!searchEmail.trim() || !orgId) return;
+    setSearching(true);
+    setSearchResult(null);
+    try {
+      const { data } = await api.get<User[]>(
+        `/organizations/${orgId}/users/search?email=${encodeURIComponent(searchEmail)}&role=student`
+      );
+      setSearchResult(data.length > 0 ? data[0] : "not_found");
+    } catch {
+      toast.error("Qidirishda xatolik");
+    } finally {
+      setSearching(false);
+    }
   };
 
-  const formatDate = (dateStr: string) => {
-    return new Date(dateStr).toLocaleDateString("uz-UZ", {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-    });
+  const closeDialog = () => {
+    setOpen(false);
+    setCreatedMember(null);
+    setSearchEmail("");
+    setSearchResult(null);
+    setSelectedClassForExisting("");
+    setFullName("");
   };
+
+  const formatDate = (d: string) =>
+    new Date(d).toLocaleDateString("uz-UZ", { year: "numeric", month: "short", day: "numeric" });
+
+  if (!orgId) {
+    return <div className="text-center py-16 text-muted-foreground">Tashkilot ma&apos;lumotlari yuklanmoqda...</div>;
+  }
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">O&apos;quvchilar ro&apos;yxati</h1>
-        <Dialog open={open} onOpenChange={setOpen}>
+        <Dialog open={open} onOpenChange={(v) => { if (!v) closeDialog(); else setOpen(true); }}>
           <DialogTrigger asChild>
-            <Button>
-              <Plus className="h-4 w-4 mr-2" />
-              O&apos;quvchi qo&apos;shish
-            </Button>
+            <Button><Plus className="h-4 w-4 mr-2" />O&apos;quvchi qo&apos;shish</Button>
           </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>O&apos;quvchi qo&apos;shish</DialogTitle>
-            </DialogHeader>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="userId">Foydalanuvchi ID</Label>
-                <Input
-                  id="userId"
-                  type="text"
-                  placeholder="Foydalanuvchi ID kiriting"
-                  value={userId}
-                  onChange={(e) => setUserId(e.target.value)}
-                  required
-                />
-              </div>
-              <Button type="submit" className="w-full" disabled={invite.isPending}>
-                {invite.isPending ? "Qo'shilmoqda..." : "Qo'shish"}
-              </Button>
-            </form>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader><DialogTitle>O&apos;quvchi qo&apos;shish</DialogTitle></DialogHeader>
+
+            {createdMember ? (
+              <CredentialsCard member={createdMember} classes={classes} onClose={closeDialog} />
+            ) : (
+              <Tabs defaultValue="create">
+                <TabsList className="grid w-full grid-cols-2">
+                  <TabsTrigger value="create"><UserPlus className="h-4 w-4 mr-2" />Yangi yaratish</TabsTrigger>
+                  <TabsTrigger value="search"><Search className="h-4 w-4 mr-2" />Mavjudni qidirish</TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="create" className="space-y-4 mt-4">
+                  <p className="text-sm text-muted-foreground">
+                    Faqat ism kiriting — tizim avtomatik username va parol yaratadi.
+                  </p>
+                  <div className="space-y-2">
+                    <Label>To&apos;liq ism *</Label>
+                    <Input
+                      placeholder="Ism Familiya"
+                      value={fullName}
+                      onChange={(e) => setFullName(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && fullName.trim() && createAndAdd.mutate(fullName.trim())}
+                    />
+                  </div>
+                  <Button
+                    className="w-full"
+                    onClick={() => createAndAdd.mutate(fullName.trim())}
+                    disabled={createAndAdd.isPending || !fullName.trim()}
+                  >
+                    {createAndAdd.isPending ? "Yaratilmoqda..." : "Yaratish"}
+                  </Button>
+                </TabsContent>
+
+                <TabsContent value="search" className="space-y-4 mt-4">
+                  <div className="space-y-2">
+                    <Label>Email bo&apos;yicha qidirish</Label>
+                    <div className="flex gap-2">
+                      <Input
+                        type="email"
+                        placeholder="student@example.com"
+                        value={searchEmail}
+                        onChange={(e) => setSearchEmail(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+                      />
+                      <Button variant="secondary" onClick={handleSearch} disabled={searching}>
+                        {searching ? "..." : <Search className="h-4 w-4" />}
+                      </Button>
+                    </div>
+                  </div>
+
+                  {searchResult === "not_found" && (
+                    <p className="text-sm text-muted-foreground text-center py-2">
+                      Topilmadi. &ldquo;Yangi yaratish&rdquo; yorlig&apos;idan foydalaning.
+                    </p>
+                  )}
+                  {searchResult && searchResult !== "not_found" && (
+                    <div className="rounded-lg border p-3 space-y-3">
+                      <div>
+                        <p className="font-medium">{searchResult.full_name}</p>
+                        <p className="text-sm text-muted-foreground">{searchResult.email}</p>
+                      </div>
+                      {classes.length > 0 && (
+                        <div className="space-y-1">
+                          <Label>Sinfga biriktirish (ixtiyoriy)</Label>
+                          <Select value={selectedClassForExisting} onValueChange={setSelectedClassForExisting}>
+                            <SelectTrigger><SelectValue placeholder="Sinf tanlang" /></SelectTrigger>
+                            <SelectContent>
+                              {classes.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
+                      <Button
+                        className="w-full"
+                        onClick={() => addExisting.mutate({ userId: (searchResult as User).id, classId: selectedClassForExisting || undefined })}
+                        disabled={addExisting.isPending}
+                      >
+                        {addExisting.isPending ? "Qo'shilmoqda..." : "Tashkilotga qo'shish"}
+                      </Button>
+                    </div>
+                  )}
+                </TabsContent>
+              </Tabs>
+            )}
           </DialogContent>
         </Dialog>
       </div>
 
       {isLoading ? (
-        <div className="rounded-lg border">
-          <div className="p-4 space-y-3">
-            {Array.from({ length: 5 }).map((_, i) => (
-              <div key={i} className="flex gap-4">
-                <Skeleton className="h-5 w-1/5" />
-                <Skeleton className="h-5 w-1/5" />
-                <Skeleton className="h-5 w-1/5" />
-                <Skeleton className="h-5 w-1/5" />
-                <Skeleton className="h-5 w-1/5" />
-              </div>
-            ))}
-          </div>
+        <div className="rounded-lg border p-4 space-y-3">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="flex gap-4">
+              <Skeleton className="h-5 flex-1" /><Skeleton className="h-5 flex-1" /><Skeleton className="h-5 flex-1" />
+            </div>
+          ))}
         </div>
       ) : students && students.length > 0 ? (
         <div className="rounded-lg border">
@@ -127,28 +347,26 @@ export default function StudentsPage() {
             <TableHeader>
               <TableRow>
                 <TableHead>To&apos;liq ism</TableHead>
+                <TableHead>Username</TableHead>
                 <TableHead>Email</TableHead>
-                <TableHead>Telefon</TableHead>
+                <TableHead>Tizim paroli</TableHead>
                 <TableHead>Daraja</TableHead>
-                <TableHead>XP</TableHead>
-                <TableHead>Qo&apos;shilgan sana</TableHead>
+                <TableHead>Sana</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {students.map((student) => (
-                <TableRow key={student.id}>
-                  <TableCell className="font-medium">
-                    {student.full_name}
-                  </TableCell>
-                  <TableCell>{student.email}</TableCell>
-                  <TableCell>{student.phone ?? "---"}</TableCell>
+              {students.map((s) => (
+                <TableRow key={s.id} className="cursor-pointer hover:bg-muted/50" onClick={() => router.push(`/org/students/${s.id}`)}>
+                  <TableCell className="font-medium">{s.full_name}</TableCell>
                   <TableCell>
-                    <Badge variant="secondary">
-                      {student.level}-daraja
-                    </Badge>
+                    {s.username
+                      ? <Badge variant="outline" className="font-mono text-xs">{s.username}</Badge>
+                      : <span className="text-muted-foreground text-xs">—</span>}
                   </TableCell>
-                  <TableCell>{student.xp} XP</TableCell>
-                  <TableCell>{formatDate(student.created_at)}</TableCell>
+                  <TableCell className="text-sm">{s.email}</TableCell>
+                  <TableCell onClick={(e) => e.stopPropagation()}><PasswordCell userId={s.id} orgId={orgId} /></TableCell>
+                  <TableCell><Badge variant="secondary">{s.level}-daraja</Badge></TableCell>
+                  <TableCell className="text-sm">{formatDate(s.created_at)}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -157,16 +375,8 @@ export default function StudentsPage() {
       ) : (
         <div className="text-center py-16">
           <GraduationCap className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-          <h3 className="text-lg font-medium mb-2">
-            Hali o&apos;quvchilar yo&apos;q
-          </h3>
-          <p className="text-muted-foreground mb-4">
-            Birinchi o&apos;quvchini taklif qiling
-          </p>
-          <Button onClick={() => setOpen(true)} disabled={!orgId}>
-            <Plus className="h-4 w-4 mr-2" />
-            O&apos;quvchi qo&apos;shish
-          </Button>
+          <h3 className="text-lg font-medium mb-2">Hali o&apos;quvchilar yo&apos;q</h3>
+          <p className="text-muted-foreground">Yuqoridagi tugma orqali o&apos;quvchi qo&apos;shing</p>
         </div>
       )}
     </div>

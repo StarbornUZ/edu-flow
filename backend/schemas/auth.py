@@ -29,7 +29,7 @@ class RegisterRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    email: str  # email yoki username qabul qilinadi
     password: str
 
 
@@ -70,6 +70,8 @@ class UserResponse(BaseModel):
     level: int
     streak_count: int
     org_id: uuid.UUID | None = None
+    username: str | None = None
+    phone: str | None = None
 
 
 class TokenResponse(BaseModel):

@@ -642,6 +642,198 @@ async def analyze_stats(stats_data: dict) -> str:
     return "".join(result)
 
 
+async def generate_course_structured(
+    subject: str,
+    grade_level: int,
+    goal: str,
+    module_count: int,
+    context_text: str = "",
+) -> AsyncGenerator[str, None]:
+    """
+    Phased course generation using Claude tool_use.
+    Yields SSE-ready JSON strings (no data: prefix — caller adds it).
+
+    Event shapes:
+      {"type": "phase",        "phase": "modules", "message": "..."}
+      {"type": "modules_done", "course_title": "...", "course_description": "...",
+                               "difficulty": "...", "modules": [{"title","description"}]}
+      {"type": "phase",        "phase": "topics", "module_index": N, "module_title": "..."}
+      {"type": "topics_done",  "module_index": N, "topics": [{"title","content_md"}]}
+      {"type": "done",         "course": {complete nested object}}
+    """
+    import json as _json
+
+    client = _get_anthropic()
+    context_section = (
+        f"\n\nKontekst (darslik/qo'llanma):\n{context_text[:3000]}"
+        if context_text.strip()
+        else ""
+    )
+
+    # ── Phase 1: modules ──────────────────────────────────────────────────────
+    yield _json.dumps({"type": "phase", "phase": "modules",
+                        "message": "Kurs strukturasi va modullar yaratilmoqda..."})
+
+    modules_tool: dict = {
+        "name": "create_course_structure",
+        "description": "Create a full course structure with modules.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"},
+                "description": {"type": "string"},
+                "difficulty": {"type": "string", "enum": ["beginner", "intermediate", "advanced"]},
+                "modules": {
+                    "type": "array",
+                    "minItems": module_count,
+                    "maxItems": module_count,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string"},
+                            "description": {"type": "string"},
+                        },
+                        "required": ["title", "description"],
+                    },
+                },
+            },
+            "required": ["title", "description", "difficulty", "modules"],
+        },
+    }
+
+    msg1 = await client.messages.create(
+        model=MODEL_CLAUDE,
+        max_tokens=2048,
+        tools=[modules_tool],
+        tool_choice={"type": "tool", "name": "create_course_structure"},
+        system=(
+            "Sen tajribali o'zbek tilida ta'lim beruvchi AI assistantsan. "
+            "Barcha matnlar o'zbek tilida bo'lishi shart."
+        ),
+        messages=[{
+            "role": "user",
+            "content": (
+                f"Fan: {subject}\nSinf: {grade_level}-sinf\n"
+                f"O'quv maqsadi: {goal}\nModullar soni: {module_count}"
+                f"{context_section}\n\nKurs yarating."
+            ),
+        }],
+    )
+
+    tool_block = next((b for b in msg1.content if b.type == "tool_use"), None)
+    if tool_block is None:
+        raise ValueError("AI modullar yaratmadi")
+    ci = tool_block.input  # type: ignore[attr-defined]
+
+    course_title: str = ci["title"]
+    course_description: str = ci["description"]
+    course_difficulty: str = ci["difficulty"]
+    modules_data: list[dict] = ci["modules"]
+
+    yield _json.dumps({
+        "type": "modules_done",
+        "course_title": course_title,
+        "course_description": course_description,
+        "difficulty": course_difficulty,
+        "modules": modules_data,
+    })
+
+    # ── Phase 2: topics per module ────────────────────────────────────────────
+    topics_tool: dict = {
+        "name": "create_module_topics",
+        "description": "Create detailed topics for a single course module.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "topics": {
+                    "type": "array",
+                    "minItems": 2,
+                    "maxItems": 5,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string"},
+                            "content_md": {
+                                "type": "string",
+                                "description": (
+                                    "Markdown formatted educational content, "
+                                    "at least 300 words. Use ## headings, bullet lists, "
+                                    "and $$...$$ for LaTeX formulas."
+                                ),
+                            },
+                        },
+                        "required": ["title", "content_md"],
+                    },
+                }
+            },
+            "required": ["topics"],
+        },
+    }
+
+    all_modules_with_topics: list[dict] = []
+    seen_topic_titles: list[str] = []
+
+    for idx, module in enumerate(modules_data):
+        yield _json.dumps({
+            "type": "phase",
+            "phase": "topics",
+            "module_index": idx,
+            "module_title": module["title"],
+            "message": f"'{module['title']}' moduli uchun mavzular yaratilmoqda...",
+        })
+
+        prev_ctx = (
+            f"\n\nOldingi mavzular (takrorlamang): {', '.join(seen_topic_titles[-10:])}"
+            if seen_topic_titles
+            else ""
+        )
+
+        msg2 = await client.messages.create(
+            model=MODEL_CLAUDE,
+            max_tokens=8000,
+            tools=[topics_tool],
+            tool_choice={"type": "tool", "name": "create_module_topics"},
+            system=(
+                "Sen tajribali o'zbek tilida ta'lim beruvchi AI assistantsan. "
+                "Barcha matnlar o'zbek tilida bo'lishi shart. "
+                "Kontent markdown formatida, formulalar uchun $$...$$ ishlatilsin."
+            ),
+            messages=[{
+                "role": "user",
+                "content": (
+                    f"Kurs: {course_title}\nFan: {subject}, {grade_level}-sinf\n"
+                    f"Modul: {module['title']}\nModul tavsifi: {module['description']}"
+                    f"{prev_ctx}{context_section}\n\n"
+                    "Bu modul uchun mavzular yarating (2-5 ta)."
+                ),
+            }],
+        )
+
+        t_block = next((b for b in msg2.content if b.type == "tool_use"), None)
+        if t_block is None:
+            topics: list[dict] = []
+        else:
+            topics = t_block.input.get("topics", [])  # type: ignore[attr-defined]
+
+        seen_topic_titles.extend(t["title"] for t in topics)
+        all_modules_with_topics.append({**module, "topics": topics})
+
+        yield _json.dumps({"type": "topics_done", "module_index": idx, "topics": topics})
+
+    # ── Done ──────────────────────────────────────────────────────────────────
+    yield _json.dumps({
+        "type": "done",
+        "course": {
+            "title": course_title,
+            "description": course_description,
+            "subject": subject,
+            "difficulty": course_difficulty,
+            "grade_level": grade_level,
+            "modules": all_modules_with_topics,
+        },
+    })
+
+
 async def split_into_groups(students: list[dict], n_groups: int) -> dict:
     """O'quvchilarni adolatli guruhlarga bo'lish."""
     from backend.services.prompts.grading_prompts import GROUP_SPLIT_SYSTEM, group_split_user

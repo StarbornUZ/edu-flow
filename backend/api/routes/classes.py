@@ -2,8 +2,9 @@
 import uuid
 
 from fastapi import APIRouter, HTTPException, status
+from pydantic import BaseModel
 
-from backend.api.deps import CurrentStudent, CurrentTeacher, CurrentUser, DBSession
+from backend.api.deps import CurrentOrgAdmin, CurrentStudent, CurrentTeacher, CurrentUser, DBSession
 from backend.db.models.course import CourseEnrollment
 from backend.db.models.user import UserRole
 from backend.repositories.class_repo import ClassRepository
@@ -66,36 +67,41 @@ async def _check_class_access(repo: ClassRepository, cls, user) -> None:
 @router.get(
     "/",
     response_model=list[ClassResponse],
-    summary="Sinflar ro'yxati (teacher: o'z sinflari, student: a'zo sinflari)",
+    summary="Sinflar ro'yxati (org_admin: tashkilot sinflari, teacher: o'z sinflari, student: a'zo sinflari)",
 )
 async def list_classes(user: CurrentUser, db: DBSession):
     repo = _repo(db)
     if user.role == UserRole.student:
         classes = await repo.get_enrolled_by_student(user.id)
+    elif user.role == UserRole.org_admin:
+        classes = await repo.get_by_org(user.org_id)
     else:  # teacher yoki admin
         classes = await repo.get_by_teacher(user.id)
     return [ClassResponse.model_validate(c) for c in classes]
 
 
 # ---------------------------------------------------------------------------
-# POST /classes  — sinf yaratish (faqat teacher)
+# POST /classes  — sinf yaratish (org_admin yoki teacher)
 # ---------------------------------------------------------------------------
 
 @router.post(
     "/",
     response_model=ClassResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Yangi sinf yaratish (6 belgili kod avtomatik)",
+    summary="Yangi sinf yaratish — org_admin yoki teacher",
 )
-async def create_class(data: ClassCreate, teacher: CurrentTeacher, db: DBSession):
+async def create_class(data: ClassCreate, user: CurrentTeacher, db: DBSession):
+    # Org admin sinfni to'g'ridan-to'g'ri yaratadi; teacher o'zini biriktiradi
+    teacher_id = data.teacher_id if data.teacher_id else (
+        user.id if user.role == UserRole.teacher else None
+    )
+    org_id = data.org_id or user.org_id
     cls = await _repo(db).create(
-        teacher_id=teacher.id,
+        teacher_id=teacher_id,
         name=data.name,
-        subject=data.subject,
         academic_year=data.academic_year,
-        org_id=data.org_id if hasattr(data, "org_id") else None,
-        subject_id=data.subject_id if hasattr(data, "subject_id") else None,
-        grade_level=data.grade_level if hasattr(data, "grade_level") else None,
+        org_id=org_id,
+        grade_level=data.grade_level,
     )
     return ClassResponse.model_validate(cls)
 
@@ -189,6 +195,40 @@ async def list_students(
 
     enrollments = await repo.get_students(class_id)
     return [ClassEnrollmentResponse.model_validate(e) for e in enrollments]
+
+
+# ---------------------------------------------------------------------------
+# POST /classes/{id}/students  — org_admin o'quvchini sinfga qo'shadi
+# ---------------------------------------------------------------------------
+
+class AddStudentRequest(BaseModel):
+    student_id: uuid.UUID
+
+
+@router.post(
+    "/{class_id}/students",
+    response_model=ClassEnrollmentResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="O'quvchini sinfga qo'shish (org_admin)",
+)
+async def add_student_to_class(
+    class_id: uuid.UUID,
+    data: AddStudentRequest,
+    user: CurrentUser,
+    db: DBSession,
+):
+    if user.role not in (UserRole.org_admin, UserRole.admin, UserRole.teacher):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Ruxsat yo'q")
+
+    repo = _repo(db)
+    cls = await _get_class_or_404(repo, class_id)
+
+    existing = await repo.get_enrollment(class_id, data.student_id)
+    if existing:
+        raise HTTPException(status.HTTP_409_CONFLICT, "O'quvchi allaqachon bu sinfda")
+
+    enrollment = await repo.enroll_student(class_id, data.student_id)
+    return ClassEnrollmentResponse.model_validate(enrollment)
 
 
 # ---------------------------------------------------------------------------

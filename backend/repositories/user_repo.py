@@ -1,5 +1,6 @@
 import uuid
 from datetime import date, timedelta
+from typing import Sequence
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,6 +28,38 @@ class UserRepository:
             select(User).where(User.email == email)
         )
         return result.scalar_one_or_none()
+
+    async def get_by_username(self, username: str) -> User | None:
+        result = await self.session.execute(
+            select(User).where(User.username == username)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_by_email_or_username(self, identifier: str) -> User | None:
+        """Email yoki username bo'yicha foydalanuvchini topadi."""
+        from sqlalchemy import or_
+        result = await self.session.execute(
+            select(User).where(
+                or_(User.email == identifier, User.username == identifier)
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def get_by_org(self, org_id: uuid.UUID) -> Sequence[User]:
+        """Tashkilotga tegishli foydalanuvchilar."""
+        result = await self.session.execute(
+            select(User).where(User.org_id == org_id).order_by(User.full_name)
+        )
+        return result.scalars().all()
+
+    async def search_by_email(self, email: str, role: str | None = None) -> Sequence[User]:
+        """Email bo'yicha qidirish (qisman moslik)."""
+        q = select(User).where(User.email.ilike(f"%{email}%"))
+        if role:
+            q = q.where(User.role == role)
+        q = q.limit(10)
+        result = await self.session.execute(q)
+        return result.scalars().all()
 
     async def get_by_id(self, user_id: uuid.UUID) -> User | None:
         result = await self.session.execute(

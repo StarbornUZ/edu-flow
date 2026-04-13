@@ -14,6 +14,18 @@ export interface User {
   streak_count: number;
   streak_last_date: string | null;
   created_at: string;
+  username: string | null;
+  system_password: string | null;
+}
+
+export interface CreatedMember {
+  id: string;
+  full_name: string;
+  email: string;
+  username: string;
+  generated_password: string;
+  role: string;
+  org_id: string | null;
 }
 
 export interface AuthResponse {
@@ -109,15 +121,16 @@ export interface Topic {
   content_latex: string | null;
   video_url: string | null;
   is_published: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
 // ─── Class ───────────────────────────────────────────────────────────────────
 export interface Class {
   id: string;
-  teacher_id: string;
+  teacher_id: string | null;
   org_id: string | null;
   name: string;
-  subject: string;
   academic_year: string;
   class_code: string;
   class_code_expires_at: string | null;

@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, status
 from backend.api.deps import CurrentTeacher, CurrentUser, DBSession
 from backend.db.models.user import UserRole
 from backend.repositories.course_repo import CourseRepository
+from backend.schemas.class_ import ClassResponse
 from backend.schemas.course import (
     CourseCreate,
     CourseResponse,
@@ -101,16 +102,32 @@ async def list_courses(user: CurrentUser, db: DBSession):
     summary="Yangi kurs yaratish",
 )
 async def create_course(data: CourseCreate, teacher: CurrentTeacher, db: DBSession):
+    from sqlalchemy import select
+    from backend.db.models.subject import Subject
+
+    subject_name = data.subject
+    subject_id = data.subject_id
+
+    # subject_id berilgan bo'lsa — nomni DBdan olamiz
+    if subject_id:
+        result = await db.execute(select(Subject).where(Subject.id == subject_id))
+        subj = result.scalar_one_or_none()
+        if not subj:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Bunday fan topilmadi")
+        subject_name = subj.name
+    elif not subject_name:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "subject yoki subject_id kerak")
+
     course = await _repo(db).create(
         teacher_id=teacher.id,
         title=data.title,
         description=data.description,
-        subject=data.subject,
+        subject=subject_name,
+        subject_id=subject_id,
         difficulty=data.difficulty,
         cover_url=data.cover_url,
         is_ai_generated=data.is_ai_generated,
-        org_id=data.org_id if hasattr(data, "org_id") else None,
-        subject_id=data.subject_id if hasattr(data, "subject_id") else None,
+        org_id=data.org_id,
     )
     return CourseResponse.model_validate(course)
 
@@ -259,8 +276,6 @@ async def add_module(
     module = await repo.add_module(
         course_id=course_id,
         title=data.title,
-        content_md=data.content_md,
-        order_number=data.order_number,
         prev_module_id=data.prev_module_id,
         is_published=data.is_published,
     )
@@ -320,3 +335,47 @@ async def delete_module(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Modul bu kursga tegishli emas")
 
     await repo.delete_module(module)
+
+
+# ---------------------------------------------------------------------------
+# GET /courses/{id}/classes  — kursga biriktirilgan sinflar
+# ---------------------------------------------------------------------------
+
+@router.get(
+    "/{course_id}/classes",
+    response_model=list[ClassResponse],
+    summary="Kursga biriktirilgan sinflar ro'yxati",
+)
+async def list_course_classes(
+    course_id: uuid.UUID,
+    teacher: CurrentTeacher,
+    db: DBSession,
+):
+    repo = _repo(db)
+    course = await _get_course_or_404(repo, course_id)
+    _check_owner(course, teacher)
+    classes = await repo.get_classes_for_course(course_id)
+    return [ClassResponse.model_validate(c) for c in classes]
+
+
+# ---------------------------------------------------------------------------
+# DELETE /courses/{id}/classes/{class_id}  — sinfni kursdan olib tashlash
+# ---------------------------------------------------------------------------
+
+@router.delete(
+    "/{course_id}/classes/{class_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Sinfni kursdan olib tashlash",
+)
+async def remove_class_from_course(
+    course_id: uuid.UUID,
+    class_id: uuid.UUID,
+    teacher: CurrentTeacher,
+    db: DBSession,
+):
+    repo = _repo(db)
+    course = await _get_course_or_404(repo, course_id)
+    _check_owner(course, teacher)
+    removed = await repo.remove_class_from_course(course_id, class_id)
+    if not removed:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Sinf bu kursga biriktirilmagan")

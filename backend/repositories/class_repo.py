@@ -34,7 +34,7 @@ class ClassRepository:
     # Class CRUD
     # ------------------------------------------------------------------
 
-    async def create(self, teacher_id: uuid.UUID, **data) -> Class:
+    async def create(self, teacher_id: uuid.UUID | None = None, **data) -> Class:
         """Sinf yaratadi va 24 soatlik class_code beradi."""
         code = generate_class_code()          # boshlang'ich qiymat
         for _ in range(10):
@@ -68,6 +68,16 @@ class ClassRepository:
             )
         )
         return result.scalar_one_or_none()
+
+    async def get_by_org(self, org_id: uuid.UUID | None) -> Sequence[Class]:
+        """Tashkilotga tegishli barcha sinflar."""
+        if not org_id:
+            return []
+        result = await self.db.execute(
+            select(Class).where(Class.org_id == org_id)
+                         .order_by(Class.created_at.desc())
+        )
+        return result.scalars().all()
 
     async def get_by_teacher(self, teacher_id: uuid.UUID) -> Sequence[Class]:
         result = await self.db.execute(

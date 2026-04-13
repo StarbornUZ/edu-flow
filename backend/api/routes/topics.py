@@ -73,10 +73,16 @@ async def create_topic(
     if course and course.teacher_id != teacher.id and teacher.role != UserRole.admin:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu modul sizga tegishli emas")
 
+    from sqlalchemy import func
+    idx_result = await db.execute(
+        select(func.max(Topic.order_index)).where(Topic.module_id == module_id)
+    )
+    next_index = (idx_result.scalar_one_or_none() or -1) + 1
+
     topic = Topic(
         module_id=module_id,
         title=data.title,
-        order_index=data.order_index,
+        order_index=next_index,
         content_md=data.content_md,
         content_latex=data.content_latex,
         video_url=data.video_url,
