@@ -285,7 +285,13 @@ async def enroll_class_to_course(
 
     repo = _repo(db)
     cls = await _get_class_or_404(repo, class_id)
-    _check_owner(cls, teacher)
+
+    # Sinf egasi yoki bir xil tashkilotdagi o'qituvchi kirishi mumkin
+    if teacher.role == UserRole.teacher:
+        if cls.teacher_id != teacher.id and cls.org_id != teacher.org_id:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu sinf sizga tegishli emas")
+    elif teacher.role not in (UserRole.org_admin, UserRole.admin):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Ruxsat yo'q")
 
     course = await CourseRepository(db).get_by_id(data.course_id)
     if not course:

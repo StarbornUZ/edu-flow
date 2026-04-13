@@ -52,11 +52,13 @@ class TopicGenerateRequest(BaseModel):
 
 
 class AssignmentGenerateRequest(BaseModel):
-    topic: str
-    subject: str
-    grade_level: int
+    topic: str = ""
+    subject: str = ""
+    grade_level: int = 10
     question_type: str = "mcq"
     count: int = 5
+    course_id: uuid.UUID | None = None  # course dan topic/subject olish uchun
+    game_type: str | None = None        # frontend compat (ignored)
 
 
 class GradeRequest(BaseModel):
@@ -188,10 +190,25 @@ async def generate_assignment(
 ):
     """JSON formatida vazifa savollarini qaytaradi."""
     from backend.services.prompts.course_prompts import ASSIGNMENT_GENERATION_SYSTEM, assignment_generation_user
+
+    topic = body.topic
+    subject = body.subject
+
+    # course_id berilgan bo'lsa, kursdan mavzu va fan olish
+    if body.course_id and (not topic or not subject):
+        from backend.db.models.course import Course
+        course = await db.get(Course, body.course_id)
+        if course:
+            topic = topic or course.title
+            subject = subject or course.subject
+
+    topic = topic or "Umumiy mavzu"
+    subject = subject or "Umumiy"
+
     result = await ai_service.get_json_from_claude(
         system=ASSIGNMENT_GENERATION_SYSTEM,
         user_message=assignment_generation_user(
-            body.topic, body.subject, body.grade_level,
+            topic, subject, body.grade_level,
             body.question_type, body.count
         ),
         max_tokens=3000,
