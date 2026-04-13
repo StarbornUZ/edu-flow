@@ -1,7 +1,11 @@
 import axios from "axios";
+import { useAuthStore } from "@/stores/auth.store";
+
+export const BASE_URL =
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
 
 export const api = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1",
+  baseURL: BASE_URL,
   headers: { "Content-Type": "application/json" },
 });
 
@@ -28,7 +32,7 @@ api.interceptors.response.use(
         if (!refresh) throw new Error("No refresh token");
 
         const { data } = await axios.post(
-          `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1"}/auth/refresh`,
+          `${BASE_URL}/auth/refresh`,
           { refresh_token: refresh }
         );
         localStorage.setItem("access_token", data.access_token);
@@ -38,9 +42,9 @@ api.interceptors.response.use(
         original.headers.Authorization = `Bearer ${data.access_token}`;
         return api(original);
       } catch {
-        localStorage.removeItem("access_token");
-        localStorage.removeItem("refresh_token");
-        if (typeof window !== "undefined") {
+        // Zustand persisted store ni ham tozalash — aks holda reload loopga tushadi
+        useAuthStore.getState().logout();
+        if (typeof window !== "undefined" && window.location.pathname !== "/login") {
           window.location.href = "/login";
         }
       }
