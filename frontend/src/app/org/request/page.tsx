@@ -39,6 +39,7 @@ interface OrgRequest {
   org_data: Record<string, string>;
   review_note: string | null;
   created_at: string;
+  updated_at: string;
 }
 
 const statusConfig = {
@@ -52,6 +53,19 @@ const orgTypeLabels: Record<string, string> = {
   learning_center: "O'quv markaz",
   university: "Universitet",
 };
+
+const COOLDOWN_SECONDS = 86400;
+
+function getCooldownRemaining(updatedAt: string): number {
+  const elapsed = (Date.now() - new Date(updatedAt).getTime()) / 1000;
+  return Math.max(0, COOLDOWN_SECONDS - elapsed);
+}
+
+function formatCooldown(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  return `${h} soat ${m} daqiqa`;
+}
 
 export default function OrgRequestPage() {
   const queryClient = useQueryClient();
@@ -67,6 +81,7 @@ export default function OrgRequestPage() {
   const {
     register,
     handleSubmit,
+    reset,
     formState: { errors, isSubmitting },
   } = useForm<FormData>({
     resolver: zodResolver(schema),
@@ -105,6 +120,25 @@ export default function OrgRequestPage() {
     const status = req?.status ?? "pending";
     const cfg = statusConfig[status];
     const Icon = cfg.icon;
+
+    const cooldownRemaining =
+      status === "rejected" && req?.updated_at
+        ? getCooldownRemaining(req.updated_at)
+        : 0;
+
+    const handleResubmit = () => {
+      if (req?.org_data) {
+        reset({
+          name: req.org_data.name ?? "",
+          type: (req.org_data.type as FormData["type"]) ?? "school",
+          address: req.org_data.address ?? "",
+          phone: req.org_data.phone ?? "",
+          stir: req.org_data.stir ?? "",
+          responsible_person: req.org_data.responsible_person ?? "",
+        });
+      }
+      setSubmitted(false);
+    };
 
     return (
       <div className="max-w-2xl space-y-6">
@@ -156,12 +190,23 @@ export default function OrgRequestPage() {
             )}
 
             {status === "rejected" && (
-              <Button
-                variant="outline"
-                onClick={() => setSubmitted(false)}
-              >
-                Qaytadan yuborish
-              </Button>
+              <div className="space-y-2">
+                {cooldownRemaining > 0 ? (
+                  <div className="space-y-2">
+                    <p className="text-sm text-muted-foreground">
+                      Qaytadan yuborish uchun kuting:
+                    </p>
+                    <Button variant="outline" disabled>
+                      <Clock className="h-4 w-4 mr-2" />
+                      {formatCooldown(cooldownRemaining)}
+                    </Button>
+                  </div>
+                ) : (
+                  <Button variant="outline" onClick={handleResubmit}>
+                    Qaytadan yuborish
+                  </Button>
+                )}
+              </div>
             )}
 
             {status === "pending" && (

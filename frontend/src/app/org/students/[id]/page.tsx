@@ -1,8 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { ArrowLeft, BookOpen, GraduationCap, Zap, Flame, Star, BarChart2, Eye, EyeOff, RefreshCw } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { ArrowLeft, BookOpen, GraduationCap, Zap, Flame, Star, BarChart2, Eye, EyeOff, RefreshCw, UserPlus, Trash2, Users } from "lucide-react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useState } from "react";
 import { api } from "@/lib/api";
@@ -12,6 +12,16 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import type { StudentParent } from "@/types";
 
 interface StudentProfile {
   id: string;
@@ -80,6 +90,202 @@ function PasswordPanel({ userId, orgId }: { userId: string; orgId: string }) {
         <RefreshCw className={`h-4 w-4 ${resetting ? "animate-spin" : ""}`} />
       </Button>
     </div>
+  );
+}
+
+function ParentSection({ studentId, orgId }: { studentId: string; orgId: string }) {
+  const queryClient = useQueryClient();
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [email, setEmail] = useState("");
+  const [fullName, setFullName] = useState("");
+  const [searchResult, setSearchResult] = useState<StudentParent | "not_found" | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [newCredentials, setNewCredentials] = useState<{ password: string; username: string } | null>(null);
+
+  const { data: parents, isLoading } = useQuery<StudentParent[]>({
+    queryKey: ["student-parents", orgId, studentId],
+    queryFn: () =>
+      api.get<StudentParent[]>(`/organizations/${orgId}/students/${studentId}/parents`).then((r) => r.data),
+  });
+
+  const assignParent = useMutation({
+    mutationFn: (body: { email: string; full_name?: string }) =>
+      api.post<StudentParent & { generated_password?: string }>(
+        `/organizations/${orgId}/students/${studentId}/parents`,
+        body
+      ),
+    onSuccess: (res) => {
+      toast.success("Ota-ona biriktirildi");
+      queryClient.invalidateQueries({ queryKey: ["student-parents", orgId, studentId] });
+      if (res.data.generated_password) {
+        setNewCredentials({ password: res.data.generated_password, username: res.data.username ?? "" });
+      } else {
+        setDialogOpen(false);
+        setEmail(""); setFullName(""); setSearchResult(null);
+      }
+    },
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      toast.error(msg ?? "Biriktirishda xatolik");
+    },
+  });
+
+  const removeParent = useMutation({
+    mutationFn: (parentId: string) =>
+      api.delete(`/organizations/${orgId}/students/${studentId}/parents/${parentId}`),
+    onSuccess: () => {
+      toast.success("Ota-ona olib tashlandi");
+      queryClient.invalidateQueries({ queryKey: ["student-parents", orgId, studentId] });
+    },
+    onError: () => toast.error("O'chirishda xatolik"),
+  });
+
+  const handleSearch = async () => {
+    if (!email.trim()) return;
+    setSearching(true);
+    setSearchResult(null);
+    try {
+      const { data } = await api.get<{ id: string; full_name: string; email: string; username: string | null }[]>(
+        `/organizations/${orgId}/users/search?email=${encodeURIComponent(email)}&role=parent`
+      );
+      setSearchResult(data.length > 0 ? (data[0] as StudentParent) : "not_found");
+    } catch {
+      toast.error("Qidirishda xatolik");
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const closeDialog = () => {
+    setDialogOpen(false);
+    setEmail(""); setFullName(""); setSearchResult(null); setNewCredentials(null);
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Users className="h-4 w-4" />
+            Ota-ona
+          </CardTitle>
+          <Dialog open={dialogOpen} onOpenChange={(v) => { if (!v) closeDialog(); else setDialogOpen(true); }}>
+            <DialogTrigger asChild>
+              <Button size="sm" variant="outline">
+                <UserPlus className="h-4 w-4 mr-2" />
+                Biriktirish
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle>Ota-ona biriktirish</DialogTitle>
+              </DialogHeader>
+              {newCredentials ? (
+                <div className="space-y-3">
+                  <p className="text-sm text-muted-foreground">Yangi ota-ona yaratildi. Login ma'lumotlari:</p>
+                  <div className="rounded-lg border bg-muted/30 p-3 space-y-1 font-mono text-sm">
+                    <p>Username: <span className="font-semibold">{newCredentials.username}</span></p>
+                    <p>Parol: <span className="font-semibold">{newCredentials.password}</span></p>
+                  </div>
+                  <Button className="w-full" onClick={closeDialog}>Yopish</Button>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="space-y-1">
+                    <Label>Email orqali qidirish</Label>
+                    <div className="flex gap-2">
+                      <Input
+                        type="email"
+                        placeholder="parent@example.com"
+                        value={email}
+                        onChange={(e) => { setEmail(e.target.value); setSearchResult(null); }}
+                        onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+                      />
+                      <Button variant="secondary" onClick={handleSearch} disabled={searching || !email.trim()}>
+                        {searching ? "..." : "Qidirish"}
+                      </Button>
+                    </div>
+                  </div>
+
+                  {searchResult && searchResult !== "not_found" && (
+                    <div className="rounded-lg border p-3 space-y-2">
+                      <p className="font-medium">{(searchResult as StudentParent).full_name}</p>
+                      <p className="text-sm text-muted-foreground">{(searchResult as StudentParent).email}</p>
+                      <Button
+                        className="w-full"
+                        onClick={() => assignParent.mutate({ email })}
+                        disabled={assignParent.isPending}
+                      >
+                        {assignParent.isPending ? "Biriktirilmoqda..." : "Biriktirish"}
+                      </Button>
+                    </div>
+                  )}
+
+                  {searchResult === "not_found" && (
+                    <div className="space-y-3 border-t pt-3">
+                      <p className="text-sm text-muted-foreground">Topilmadi. Yangi ota-ona yarating:</p>
+                      <div className="space-y-1">
+                        <Label>To&apos;liq ismi *</Label>
+                        <Input
+                          placeholder="Abdullayev Sardor"
+                          value={fullName}
+                          onChange={(e) => setFullName(e.target.value)}
+                        />
+                      </div>
+                      <Button
+                        className="w-full"
+                        onClick={() => assignParent.mutate({ email, full_name: fullName })}
+                        disabled={assignParent.isPending || !fullName.trim()}
+                      >
+                        {assignParent.isPending ? "Yaratilmoqda..." : "Yaratib biriktirish"}
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </DialogContent>
+          </Dialog>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="space-y-2">
+            <Skeleton className="h-14 w-full" />
+            <Skeleton className="h-14 w-full" />
+          </div>
+        ) : parents && parents.length > 0 ? (
+          <div className="space-y-2">
+            {parents.map((p) => (
+              <div key={p.id} className="flex items-center justify-between rounded-lg border p-3">
+                <div>
+                  <p className="font-medium">{p.full_name}</p>
+                  <p className="text-xs text-muted-foreground">{p.email}</p>
+                  {p.username && <p className="text-xs text-muted-foreground font-mono">{p.username}</p>}
+                </div>
+                <div className="flex items-center gap-2">
+                  <Badge variant={p.is_confirmed ? "default" : "outline"}>
+                    {p.is_confirmed ? "Tasdiqlangan" : "Tasdiqlanmagan"}
+                  </Badge>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 text-destructive hover:text-destructive"
+                    onClick={() => removeParent.mutate(p.id)}
+                    disabled={removeParent.isPending}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground text-center py-4">
+            Hali ota-ona biriktirilmagan
+          </p>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -251,6 +457,8 @@ export default function StudentProfilePage({ params }: { params: { id: string } 
           </CardContent>
         </Card>
       )}
+
+      <ParentSection studentId={profile.id} orgId={orgId} />
     </div>
   );
 }

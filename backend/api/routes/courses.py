@@ -3,7 +3,7 @@ import uuid
 
 from fastapi import APIRouter, HTTPException, status
 
-from backend.api.deps import CurrentTeacher, CurrentUser, DBSession
+from backend.api.deps import CurrentTeacher, CurrentTeacherInOrg, CurrentUser, DBSession
 from backend.db.models.user import UserRole
 from backend.repositories.course_repo import CourseRepository
 from backend.schemas.class_ import ClassResponse
@@ -101,7 +101,7 @@ async def list_courses(user: CurrentUser, db: DBSession):
     status_code=status.HTTP_201_CREATED,
     summary="Yangi kurs yaratish",
 )
-async def create_course(data: CourseCreate, teacher: CurrentTeacher, db: DBSession):
+async def create_course(data: CourseCreate, teacher: CurrentTeacherInOrg, db: DBSession):
     from sqlalchemy import select
     from backend.db.models.subject import Subject
 

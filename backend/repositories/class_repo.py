@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.db.models.class_ import Class, ClassEnrollment, ClassEnrollmentStatus
+from backend.db.models.user import User
 
 CODE_TTL_HOURS = 24
 
@@ -160,6 +161,21 @@ class ClassRepository:
             )
         )
         return result.scalars().all()
+
+    async def get_students_with_details(
+        self, class_id: uuid.UUID
+    ) -> list[tuple[ClassEnrollment, User]]:
+        """Sinfning o'quvchilari foydalanuvchi ma'lumotlari bilan."""
+        result = await self.db.execute(
+            select(ClassEnrollment, User)
+            .join(User, User.id == ClassEnrollment.student_id)
+            .where(
+                ClassEnrollment.class_id == class_id,
+                ClassEnrollment.status == ClassEnrollmentStatus.active,
+            )
+            .order_by(User.full_name)
+        )
+        return list(result.all())
 
     async def remove_student(
         self, class_id: uuid.UUID, student_id: uuid.UUID

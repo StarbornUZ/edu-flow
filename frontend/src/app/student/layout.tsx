@@ -3,6 +3,7 @@
 import { LayoutDashboard, BookOpen, User } from "lucide-react";
 import RoleGuard from "@/components/shared/RoleGuard";
 import Navbar from "@/components/shared/Navbar";
+import OrgGate from "@/components/shared/OrgGate";
 import Sidebar from "@/components/shared/Sidebar";
 
 const sidebarItems = [
@@ -30,13 +31,15 @@ export default function StudentLayout({
 }) {
   return (
     <RoleGuard allowedRoles={["student"]}>
-      <div className="min-h-screen bg-gray-50">
-        <Navbar />
-        <div className="flex">
-          <Sidebar items={sidebarItems} />
-          <main className="flex-1 p-4 md:p-6">{children}</main>
+      <OrgGate>
+        <div className="min-h-screen bg-gray-50">
+          <Navbar />
+          <div className="flex">
+            <Sidebar items={sidebarItems} />
+            <main className="flex-1 p-4 md:p-6">{children}</main>
+          </div>
         </div>
-      </div>
+      </OrgGate>
     </RoleGuard>
   );
 }

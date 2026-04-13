@@ -41,6 +41,11 @@ class OrganizationResponse(BaseModel):
     updated_at: datetime
 
 
+class OrganizationWithCountsResponse(OrganizationResponse):
+    teachers_count: int = 0
+    students_count: int = 0
+
+
 # ---------------------------------------------------------------------------
 # OrganizationRequest schemas
 # ---------------------------------------------------------------------------

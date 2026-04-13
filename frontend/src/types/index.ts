@@ -51,8 +51,14 @@ export interface Organization {
   status: OrgStatus;
   address: string | null;
   phone: string | null;
+  stir: string | null;
+  owner_id: string;
   ai_tokens_used: number;
   ai_token_limit: number | null;
+  created_at: string;
+  updated_at: string;
+  teachers_count: number;
+  students_count: number;
 }
 
 export interface OrgRequest {
@@ -144,6 +150,29 @@ export interface ClassEnrollment {
   student_id: string;
   status: "active" | "inactive";
   created_at: string;
+}
+
+export interface ClassStudent {
+  enrollment_id: string;
+  class_id: string;
+  student_id: string;
+  status: string;
+  enrolled_at: string;
+  full_name: string;
+  email: string;
+  username: string | null;
+  phone: string | null;
+  avatar_url: string | null;
+}
+
+export interface StudentParent {
+  id: string;
+  full_name: string;
+  email: string;
+  username: string | null;
+  phone: string | null;
+  is_confirmed: boolean;
+  generated_password?: string;
 }
 
 // ─── Assignment & Questions ──────────────────────────────────────────────────

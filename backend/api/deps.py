@@ -157,7 +157,18 @@ async def _require_parent(user: CurrentUser) -> User:
     return user
 
 
+async def _require_teacher_in_org(user: CurrentUser) -> User:
+    """Teacher/student bo'lsa, org_id majburiy."""
+    if user.role in (UserRole.teacher, UserRole.student) and not user.org_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tashkilotga bog'liq emassiz. Tashkilot adminiga murojaat qiling.",
+        )
+    return user
+
+
 CurrentTeacher = Annotated[User, Depends(_require_teacher_or_admin)]
+CurrentTeacherInOrg = Annotated[User, Depends(_require_teacher_in_org)]
 CurrentStudent = Annotated[User, Depends(_require_role(UserRole.student))]
 CurrentAdmin = Annotated[User, Depends(_require_role(UserRole.admin))]
 CurrentOrgAdmin = Annotated[User, Depends(_require_org_admin)]
