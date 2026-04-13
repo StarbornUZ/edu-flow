@@ -101,8 +101,8 @@ export default function StudentLivePage() {
   const [myResults, setMyResults] = useState<MyResult | null>(null);
   const [fullResults, setFullResults] = useState<FullResults | null>(null);
   const [showHistory, setShowHistory] = useState(false);
-  // Live group member scores (during session)
-  const [groupMembers, setGroupMembers] = useState<{ student_id: string; student_name: string; personal_score: number }[]>([]);
+  // All participants for live score panel (student_id → {student_name, team_id, personal_score})
+  const [allParticipants, setAllParticipants] = useState<ParticipantResult[]>([]);
   // Lucky card state
   const [cardGrid, setCardGrid] = useState<CardSlot[]>([]);
   const [currentTurnTeamId, setCurrentTurnTeamId] = useState<string | null>(null);
@@ -122,7 +122,7 @@ export default function StudentLivePage() {
             .then((res) => setMyResults(res.data))
             .catch(() => {});
           api.get<FullResults>(`/live-sessions/${sessionId}/results`)
-            .then((res) => setFullResults(res.data))
+            .then((res) => { setFullResults(res.data); setAllParticipants(res.data.participants); })
             .catch(() => {});
           setState("ended");
         }
@@ -157,15 +157,11 @@ export default function StudentLivePage() {
         case "team_assigned":
           if (msg.team_id && msg.team_name) {
             setMyTeam({ id: msg.team_id, name: msg.team_name, color: msg.team_color || "#3B82F6" });
-            // Load group members for live score panel
+            // Load all participants for live score panel
             api.get<FullResults>(`/live-sessions/${sessionId}/results`)
               .then((r) => {
-                const members = r.data.participants.filter((p) => p.team_id === msg.team_id);
-                setGroupMembers(members.map((m) => ({
-                  student_id: m.student_id,
-                  student_name: m.student_name,
-                  personal_score: m.personal_score,
-                })));
+                if (r.data.participants.length > 0) setAllParticipants(r.data.participants);
+                if (r.data.teams.length > 0) setTeams(r.data.teams);
               })
               .catch(() => {});
           }
@@ -227,14 +223,9 @@ export default function StudentLivePage() {
           }
           break;
         case "answer_result":
-          if (timerRef.current) clearInterval(timerRef.current);
-          setLastResult({ is_correct: msg.is_correct ?? false, score: msg.score ?? 0 });
-          if (msg.user_id === currentUser?.id && msg.score && msg.score > 0) {
-            setMyScore((prev) => prev + msg.score!);
-          }
-          // Update live group member score
-          if (msg.user_id && msg.score && msg.score > 0) {
-            setGroupMembers((prev) =>
+          // Update the answering participant's score in live panel (for everyone)
+          if (msg.user_id && typeof msg.score === "number" && msg.score > 0) {
+            setAllParticipants((prev) =>
               prev.map((m) =>
                 m.student_id === msg.user_id
                   ? { ...m, personal_score: m.personal_score + msg.score! }
@@ -242,13 +233,20 @@ export default function StudentLivePage() {
               )
             );
           }
-          setState("answered");
-          // Lucky card: revert to grid after delay
-          if (gameType === "lucky_card") {
-            setTimeout(() => {
-              setLastResult(null);
-              setState("lucky_card");
-            }, 2500);
+          // Only change UI state for the student who answered
+          if (msg.user_id === currentUser?.id) {
+            if (timerRef.current) clearInterval(timerRef.current);
+            setLastResult({ is_correct: msg.is_correct ?? false, score: msg.score ?? 0 });
+            if (typeof msg.score === "number" && msg.score > 0) {
+              setMyScore((prev) => prev + msg.score!);
+            }
+            setState("answered");
+            if (gameType === "lucky_card") {
+              setTimeout(() => {
+                setLastResult(null);
+                setState("lucky_card");
+              }, 2500);
+            }
           }
           break;
         case "leaderboard_update":
@@ -263,7 +261,10 @@ export default function StudentLivePage() {
             .then((r) => setMyResults(r.data))
             .catch(() => {});
           api.get<FullResults>(`/live-sessions/${sessionId}/results`)
-            .then((r) => setFullResults(r.data))
+            .then((r) => {
+              setFullResults(r.data);
+              setAllParticipants(r.data.participants);
+            })
             .catch(() => {});
           break;
         default:
@@ -611,32 +612,55 @@ export default function StudentLivePage() {
 
   // ── GROUP SCORE PANEL ──────────────────────────────────────────────────────
   const GroupPanel = () => {
-    if (!myTeam || groupMembers.length === 0) return null;
-    const teamTotal = teams.find((t) => t.id === myTeam.id)?.score ?? 0;
-    const sortedMembers = [...groupMembers].sort((a, b) => b.personal_score - a.personal_score);
+    if (allParticipants.length === 0) return null;
+    const sortedTeams = [...teams].sort((a, b) => b.score - a.score);
+    // If no leaderboard_update yet, group participants by team_id manually
+    const teamsToShow = sortedTeams.length > 0 ? sortedTeams : Array.from(
+      new Set(allParticipants.map((p) => p.team_id).filter(Boolean))
+    ).map((tid) => ({ id: tid!, name: tid!, score: 0, color: "#3B82F6", session_id: "" }));
+
     return (
-      <div
-        className="rounded-xl border-2 p-3 bg-white shadow-sm shrink-0"
-        style={{ borderColor: myTeam.color }}
-      >
-        {/* Group header */}
-        <div className="flex items-center gap-2 mb-3 pb-2 border-b border-gray-100">
-          <div className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: myTeam.color }} />
-          <span className="font-bold text-sm text-gray-800 flex-1 truncate">{myTeam.name}</span>
-          <span className="font-bold text-sm" style={{ color: myTeam.color }}>{teamTotal}</span>
+      <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden shrink-0">
+        <div className="px-3 py-2 bg-gray-50 border-b border-gray-100">
+          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Guruhlar</span>
         </div>
-        {/* Members */}
-        <div className="space-y-1.5">
-          {sortedMembers.map((m) => {
-            const isMe = m.student_id === currentUser?.id;
+        <div className="divide-y divide-gray-100">
+          {teamsToShow.map((team) => {
+            const members = allParticipants
+              .filter((p) => p.team_id === team.id)
+              .sort((a, b) => b.personal_score - a.personal_score);
+            const isMyTeam = myTeam?.id === team.id;
             return (
-              <div key={m.student_id} className={`flex items-center justify-between text-xs rounded px-1.5 py-1 ${isMe ? "bg-blue-50 font-semibold" : ""}`}>
-                <span className={`truncate flex-1 ${isMe ? "text-blue-800" : "text-gray-700"}`}>
-                  {isMe ? "⭐ " : ""}{m.student_name}
-                </span>
-                <span className={`ml-2 font-mono ${isMe ? "text-blue-700" : "text-gray-500"}`}>
-                  {m.personal_score}
-                </span>
+              <div key={team.id} className={`px-3 py-2 ${isMyTeam ? "bg-blue-50/40" : ""}`}>
+                {/* Team row */}
+                <div className="flex items-center gap-2 mb-1.5">
+                  <div className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: team.color || "#3B82F6" }} />
+                  <span className={`text-xs font-bold flex-1 truncate ${isMyTeam ? "text-blue-800" : "text-gray-800"}`}>
+                    {team.name}
+                  </span>
+                  <span className={`text-xs font-bold tabular-nums ${isMyTeam ? "text-blue-700" : "text-gray-700"}`}>
+                    {team.score}
+                  </span>
+                </div>
+                {/* Members */}
+                <div className="space-y-0.5 pl-4">
+                  {members.map((m) => {
+                    const isMe = m.student_id === currentUser?.id;
+                    return (
+                      <div key={m.student_id} className={`flex items-center justify-between text-xs py-0.5 rounded ${isMe ? "font-semibold" : ""}`}>
+                        <span className={`truncate flex-1 ${isMe ? "text-blue-700" : "text-gray-600"}`}>
+                          {isMe ? "● " : "· "}{m.student_name}
+                        </span>
+                        <span className={`ml-2 tabular-nums ${isMe ? "text-blue-700" : "text-gray-400"}`}>
+                          {m.personal_score}
+                        </span>
+                      </div>
+                    );
+                  })}
+                  {members.length === 0 && (
+                    <p className="text-xs text-gray-400">—</p>
+                  )}
+                </div>
               </div>
             );
           })}
@@ -646,7 +670,7 @@ export default function StudentLivePage() {
   };
 
   // ── QUESTION / ANSWERED ────────────────────────────────────────────────────
-  const hasGroupPanel = myTeam && groupMembers.length > 0;
+  const hasGroupPanel = allParticipants.length > 0;
 
   return (
     <div className="min-h-screen bg-white p-4 flex flex-col">
