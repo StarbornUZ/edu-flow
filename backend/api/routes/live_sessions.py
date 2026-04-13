@@ -26,6 +26,7 @@ from sqlalchemy import update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.deps import get_db, get_current_user, CurrentTeacher, CurrentUser, DBSession, _require_teacher_or_admin as require_teacher
+from backend.services.gamification_service import GamificationService
 from backend.db.models.class_ import Class, ClassEnrollment, ClassEnrollmentStatus
 from backend.db.models.live_session import (
     GameType,
@@ -156,21 +157,32 @@ async def create_session(
     db: AsyncSession = Depends(get_db),
 ):
     """Yangi musobaqa sessiyasi yaratish."""
+    # Group sozlamalarini config ga saqlash (keyinchalik assign-teams uchun)
+    session_config = dict(body.config)
+    if body.session_type == "group_battle":
+        session_config["group_count"] = body.group_count
+        session_config["grouping_method"] = body.grouping_method
+
     session = LiveSession(
         teacher_id=current_user.id,
         course_id=body.course_id,
         game_type=body.game_type,
         session_type=body.session_type,
         class_ids=[str(cid) for cid in body.class_ids],
-        config=body.config,
+        config=session_config,
         questions=body.questions,
     )
     db.add(session)
     await db.commit()
     await db.refresh(session)
 
-    # Guruhlarni avtomatik tuzish
-    notif_student_ids = await _auto_assign_teams(session, body, db)
+    # Class battle: guruhlar darhol tuziladi (har bir sinf = jamoa)
+    # Group battle: o'qituvchi keyinchalik "Guruhlarni tuzish" tugmasini bosadi
+    if body.session_type == "class_battle":
+        notif_student_ids = await _assign_class_battle_teams(session, body.class_ids, db)
+    else:
+        # Faqat bildirishnoma uchun talabalar ro'yxatini olamiz
+        notif_student_ids = await _collect_group_battle_students(body.class_ids, db)
 
     # Tegishli talabalarni xabardor qilish
     game_type_label = {
@@ -302,6 +314,47 @@ async def create_teams(
 
     await db.commit()
     return {"teams": [{"id": str(t.id), "name": t.name} for t in team_objects]}
+
+
+# ─── POST /live-sessions/{id}/assign-teams ───────────────────────────────────
+
+@router.post("/{session_id}/assign-teams")
+async def assign_teams(
+    session_id: uuid.UUID,
+    current_user: User = Depends(require_teacher),
+    db: AsyncSession = Depends(get_db),
+):
+    """Group battle uchun guruhlarni tuzish (o'qituvchi tugmasi bosilganda)."""
+    session = await db.get(LiveSession, session_id)
+    if not session:
+        raise HTTPException(404, "Sessiya topilmadi")
+    if session.status != SessionStatus.pending:
+        raise HTTPException(400, "Sessiya allaqachon boshlangan")
+    if session.session_type != "group_battle":
+        raise HTTPException(400, "Faqat group_battle sessiyalari uchun")
+
+    # Allaqachon guruhlar bormi?
+    existing_teams = (await db.execute(
+        select(LiveSessionTeam).where(LiveSessionTeam.session_id == session_id)
+    )).scalars().all()
+    if existing_teams:
+        raise HTTPException(400, "Guruhlar allaqachon belgilangan")
+
+    class_ids = [uuid.UUID(cid) for cid in (session.class_ids or [])]
+    if not class_ids:
+        raise HTTPException(400, "Sinf tanlanmagan")
+
+    group_count = int(session.config.get("group_count", 2))
+    grouping_method = str(session.config.get("grouping_method", "random"))
+
+    await _assign_group_battle_teams(session, class_ids[0], group_count, grouping_method, db)
+    await db.commit()
+
+    teams_result = await db.execute(
+        select(LiveSessionTeam).where(LiveSessionTeam.session_id == session_id)
+    )
+    teams = teams_result.scalars().all()
+    return {"teams": [{"id": str(t.id), "name": t.name, "color": t.color} for t in teams]}
 
 
 # ─── POST /live-sessions/{id}/start ─────────────────────────────────────────
@@ -774,116 +827,128 @@ async def _process_answer(
                 "question_index": current_idx,
             })
 
+    # XP mukofoti: to'g'ri javob uchun
+    if is_correct:
+        if session.game_type == GameType.blitz:
+            xp = max(1, score // 10)   # Dinamik: tezroq = ko'proq XP
+        else:
+            xp = 10                    # Statik: boshqa o'yinlar uchun
+        await GamificationService(db).award_xp_live(uuid.UUID(user_id), xp)
 
-# ─── Helper: Guruhlarni avtomatik tuzish ─────────────────────────────────────
 
-async def _auto_assign_teams(
+# ─── Helper: Class battle guruhlarni tuzish ──────────────────────────────────
+
+async def _assign_class_battle_teams(
     session: LiveSession,
-    body: SessionCreate,
+    class_ids: list[uuid.UUID],
     db: AsyncSession,
 ) -> list[uuid.UUID]:
-    """Sessiya turiga qarab guruhlarni avtomatik tuzadi.
-
-    Returns: talabalar UUID ro'yxati (bildirishnoma yuborish uchun).
-    """
+    """Har bir sinf → alohida jamoa. Returns: student UUID list for notifications."""
     all_student_ids: list[uuid.UUID] = []
 
-    if session.session_type == "class_battle":
-        # Har bir sinf → alohida jamoa
-        for i, class_id in enumerate(body.class_ids):
-            cls = await db.get(Class, class_id)
-            if not cls:
-                continue
+    for i, class_id in enumerate(class_ids):
+        cls = await db.get(Class, class_id)
+        if not cls:
+            continue
 
-            team = LiveSessionTeam(
-                session_id=session.id,
-                name=cls.name,
-                color=TEAM_COLORS[i % len(TEAM_COLORS)],
-            )
-            db.add(team)
-            await db.flush()
+        team = LiveSessionTeam(
+            session_id=session.id,
+            name=cls.name,
+            color=TEAM_COLORS[i % len(TEAM_COLORS)],
+        )
+        db.add(team)
+        await db.flush()
 
-            enrollments_result = await db.execute(
-                select(ClassEnrollment).where(
-                    ClassEnrollment.class_id == class_id,
-                    ClassEnrollment.status == ClassEnrollmentStatus.active,
-                )
-            )
-            for enrollment in enrollments_result.scalars().all():
-                participant = LiveSessionParticipant(
-                    session_id=session.id,
-                    student_id=enrollment.student_id,
-                    team_id=team.id,
-                )
-                db.add(participant)
-                all_student_ids.append(enrollment.student_id)
-
-    elif session.session_type == "group_battle" and body.class_ids:
-        class_id = body.class_ids[0]
-        group_count = max(2, min(body.group_count, 8))
-
-        # Sinfning faol talabalarini olish
         enrollments_result = await db.execute(
             select(ClassEnrollment).where(
                 ClassEnrollment.class_id == class_id,
                 ClassEnrollment.status == ClassEnrollmentStatus.active,
             )
         )
-        enrollments = enrollments_result.scalars().all()
-        student_ids = [e.student_id for e in enrollments]
-        all_student_ids = list(student_ids)
-
-        if body.grouping_method == "ai" and student_ids:
-            # AI-asosida: o'tgan sessiyalardagi ball bo'yicha balanslangan taqsimlash
-            student_scores: dict[uuid.UUID, float] = {}
-            for sid in student_ids:
-                score_result = await db.execute(
-                    select(func.avg(LiveSessionParticipant.personal_score)).where(
-                        LiveSessionParticipant.student_id == sid
-                    )
-                )
-                avg = score_result.scalar()
-                student_scores[sid] = float(avg or 0)
-
-            # Yuqori balldan pastga saralash, keyin "ilon" tarzida guruhlarga taqsimlash
-            sorted_students = sorted(student_ids, key=lambda sid: student_scores[sid], reverse=True)
-        else:
-            # Tasodifiy aralash
-            sorted_students = list(student_ids)
-            random.shuffle(sorted_students)
-
-        # Guruhlar yaratish
-        teams: list[LiveSessionTeam] = []
-        for i in range(group_count):
-            team = LiveSessionTeam(
-                session_id=session.id,
-                name=f"{i + 1}-guruh",
-                color=TEAM_COLORS[i % len(TEAM_COLORS)],
-            )
-            db.add(team)
-            teams.append(team)
-        await db.flush()
-
-        # Snake-draft taqsimlash: 1→2→3→3→2→1→1→... (balans uchun)
-        for idx, sid in enumerate(sorted_students):
-            # Ilon tartibida indeks hisoblash
-            cycle = group_count * 2 - 2 if group_count > 1 else 1
-            pos = idx % cycle
-            if pos < group_count:
-                team_idx = pos
-            else:
-                team_idx = cycle - pos
-            team_idx = min(team_idx, group_count - 1)
-
+        for enrollment in enrollments_result.scalars().all():
             participant = LiveSessionParticipant(
                 session_id=session.id,
-                student_id=sid,
-                team_id=teams[team_idx].id,
+                student_id=enrollment.student_id,
+                team_id=team.id,
             )
             db.add(participant)
+            all_student_ids.append(enrollment.student_id)
 
     await db.flush()
     return list(set(all_student_ids))
+
+
+async def _collect_group_battle_students(
+    class_ids: list[uuid.UUID],
+    db: AsyncSession,
+) -> list[uuid.UUID]:
+    """Group battle uchun bildirishnoma UUID ro'yxati (guruh tuzilmaydi)."""
+    if not class_ids:
+        return []
+    enrollments_result = await db.execute(
+        select(ClassEnrollment.student_id).where(
+            ClassEnrollment.class_id == class_ids[0],
+            ClassEnrollment.status == ClassEnrollmentStatus.active,
+        )
+    )
+    return [row[0] for row in enrollments_result.all()]
+
+
+async def _assign_group_battle_teams(
+    session: LiveSession,
+    class_id: uuid.UUID,
+    group_count: int,
+    grouping_method: str,
+    db: AsyncSession,
+) -> None:
+    """Group battle: sinfni guruh_count ta guruhga bo'ladi (snake-draft)."""
+    group_count = max(2, min(group_count, 8))
+
+    enrollments_result = await db.execute(
+        select(ClassEnrollment).where(
+            ClassEnrollment.class_id == class_id,
+            ClassEnrollment.status == ClassEnrollmentStatus.active,
+        )
+    )
+    student_ids = [e.student_id for e in enrollments_result.scalars().all()]
+
+    if grouping_method == "ai" and student_ids:
+        student_scores: dict[uuid.UUID, float] = {}
+        for sid in student_ids:
+            score_result = await db.execute(
+                select(func.avg(LiveSessionParticipant.personal_score)).where(
+                    LiveSessionParticipant.student_id == sid
+                )
+            )
+            student_scores[sid] = float(score_result.scalar() or 0)
+        sorted_students = sorted(student_ids, key=lambda sid: student_scores[sid], reverse=True)
+    else:
+        sorted_students = list(student_ids)
+        random.shuffle(sorted_students)
+
+    teams: list[LiveSessionTeam] = []
+    for i in range(group_count):
+        team = LiveSessionTeam(
+            session_id=session.id,
+            name=f"{i + 1}-guruh",
+            color=TEAM_COLORS[i % len(TEAM_COLORS)],
+        )
+        db.add(team)
+        teams.append(team)
+    await db.flush()
+
+    cycle = group_count * 2 - 2 if group_count > 1 else 1
+    for idx, sid in enumerate(sorted_students):
+        pos = idx % cycle
+        team_idx = pos if pos < group_count else cycle - pos
+        team_idx = min(team_idx, group_count - 1)
+        db.add(LiveSessionParticipant(
+            session_id=session.id,
+            student_id=sid,
+            team_id=teams[team_idx].id,
+        ))
+
+    await db.flush()
 
 
 # ─── Helper: Lucky Card — karta tanlash ──────────────────────────────────────
