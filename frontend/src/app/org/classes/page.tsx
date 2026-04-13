@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, School } from "lucide-react";
+import { Plus, School, Trash2 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
@@ -26,6 +26,8 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
+  DialogFooter,
+  DialogDescription,
 } from "@/components/ui/dialog";
 
 export default function ClassesPage() {
@@ -35,6 +37,7 @@ export default function ClassesPage() {
   const orgId = user?.org_id;
 
   const [openCreate, setOpenCreate] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [form, setForm] = useState({
     name: "",
     academic_year: `${new Date().getFullYear()}-${new Date().getFullYear() + 1}`,
@@ -63,6 +66,16 @@ export default function ClassesPage() {
       setForm({ name: "", academic_year: `${new Date().getFullYear()}-${new Date().getFullYear() + 1}`, grade_level: "" });
     },
     onError: () => toast.error("Sinf yaratishda xatolik yuz berdi"),
+  });
+
+  const deleteClass = useMutation({
+    mutationFn: (id: string) => api.delete(`/classes/${id}`),
+    onSuccess: () => {
+      toast.success("Sinf o'chirildi");
+      queryClient.invalidateQueries({ queryKey: ["org-classes"] });
+      setDeletingId(null);
+    },
+    onError: () => toast.error("O'chirishda xatolik yuz berdi"),
   });
 
   return (
@@ -138,6 +151,7 @@ export default function ClassesPage() {
                 <TableHead>O&apos;quv yili</TableHead>
                 <TableHead>Sinf raqami</TableHead>
                 <TableHead>Sinf kodi</TableHead>
+                <TableHead />
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -155,6 +169,16 @@ export default function ClassesPage() {
                       {cls.class_code}
                     </span>
                   </TableCell>
+                  <TableCell>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                      onClick={(e) => { e.stopPropagation(); setDeletingId(cls.id); }}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -169,6 +193,30 @@ export default function ClassesPage() {
           </p>
         </div>
       )}
+
+      {/* Delete confirmation dialog */}
+      <Dialog open={!!deletingId} onOpenChange={(open) => !open && setDeletingId(null)}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Sinfni o&apos;chirish</DialogTitle>
+            <DialogDescription>
+              Bu sinf va unga tegishli barcha ma&apos;lumotlar o&apos;chiriladi. Bu amalni ortga qaytarib bo&apos;lmaydi.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setDeletingId(null)}>
+              Bekor qilish
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={deleteClass.isPending}
+              onClick={() => deletingId && deleteClass.mutate(deletingId)}
+            >
+              {deleteClass.isPending ? "O'chirilmoqda..." : "O'chirish"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
